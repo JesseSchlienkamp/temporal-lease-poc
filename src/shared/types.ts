@@ -37,6 +37,7 @@ export type OnboardingStatus =
   | 'AWAITING_SIGNATURE'
   | 'SIGNATURE_EXPIRED'
   | 'ACTIVE'
+  | 'NEEDS_ATTENTION'
   | 'FAILED';
 
 export interface QualificationResult {
@@ -89,6 +90,8 @@ export interface OnboardingState {
   reservation?: VehicleReservation;
   quote?: Quote;
   contract?: Contract;
+  /** Set while a step has exhausted its retries and waits for an operator. */
+  needsAttention?: { step: string; error: string; since: string };
   /** Id of the contract-signing child workflow, once started. */
   signingWorkflowId?: string;
 }

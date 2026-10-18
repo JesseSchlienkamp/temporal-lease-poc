@@ -18,6 +18,7 @@ import type {
 } from '../shared/types';
 import { external, local } from './activity-proxies';
 import { contractSigning } from './contract-signing';
+import { createOperatorRecovery, rootCauseMessage } from './operator-recovery';
 
 // --- Signals & queries -------------------------------------------------------------------------
 export const quoteDecisionSignal = defineSignal<[QuoteDecision]>('quoteDecision');
@@ -28,6 +29,9 @@ export const getStateQuery = defineQuery<OnboardingState>('getState');
  *      -> [child: contract -> e-signature -> (customer signs)] -> active lease
  *
  * The workflow id is used as the lead id.
+ *
+ * External calls are wrapped in `recovery.guard`: when one exhausts its retries, the lead moves to
+ * NEEDS_ATTENTION and the workflow waits for an operator (`operatorAction` update: retry | abort).
  */
 export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOptions = {}): Promise<OnboardingState> {
   const leadId = workflowInfo().workflowId;
@@ -47,6 +51,20 @@ export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOpt
     log.info(`Lead ${leadId} -> ${status}`, { note });
     await local.updateLeadStatus(leadId, status, note);
   }
+
+  let statusBeforeParking: OnboardingStatus = state.status;
+  const recovery = createOperatorRecovery({
+    async onPark(parked) {
+      statusBeforeParking = state.status;
+      state.needsAttention = parked;
+      await setStatus('NEEDS_ATTENTION', `${parked.step}: ${parked.error}`);
+    },
+    async onResume(parked, command) {
+      state.needsAttention = undefined;
+      const note = `Operator ${command.action} at ${parked.step}${command.note ? `: ${command.note}` : ''}`;
+      await setStatus(statusBeforeParking, note);
+    },
+  });
 
   // Saga: undo side effects in external systems, even when the workflow is being cancelled.
   async function compensate(): Promise<void> {
@@ -75,17 +93,21 @@ export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOpt
     await setStatus('QUALIFIED');
 
     // 3. Credit check (flaky external call)
-    const credit = await external.runCreditCheck(leadId, lead);
+    const credit = await recovery.guard('runCreditCheck', () => external.runCreditCheck(leadId, lead));
     state.creditScore = credit.score;
     if (credit.decision === 'REJECTED') {
       await setStatus('CREDIT_REJECTED', `Score ${credit.score}`);
-      await external.sendEmail(leadId, lead.email, 'credit-rejected');
+      await recovery.guard('sendEmail:credit-rejected', () =>
+        external.sendEmail(leadId, lead.email, 'credit-rejected'),
+      );
       return state;
     }
     await setStatus('CREDIT_APPROVED', `Score ${credit.score}`);
 
     // 4. Reserve the vehicle (flaky + slow external call)
-    const reservation = await external.reserveVehicle(leadId, lead.vehicleModel);
+    const reservation = await recovery.guard('reserveVehicle', () =>
+      external.reserveVehicle(leadId, lead.vehicleModel),
+    );
     compensations.unshift(() => external.releaseVehicle(leadId, reservation.reservationId));
     state.reservation = reservation;
     await setStatus('VEHICLE_RESERVED', reservation.vin);
@@ -93,7 +115,7 @@ export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOpt
     // 5. Quote
     const quote = await local.createQuote(leadId, lead, reservation, credit);
     state.quote = quote;
-    await external.sendEmail(leadId, lead.email, 'quote', { ...quote });
+    await recovery.guard('sendEmail:quote', () => external.sendEmail(leadId, lead.email, 'quote', { ...quote }));
     await setStatus('QUOTE_SENT', `EUR ${quote.monthlyPayment}/month`);
 
     // 6. Wait (durably: days, weeks...) for the customer to accept the quote
@@ -125,20 +147,14 @@ export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOpt
     // 9. Activate
     await local.activateLease(leadId, signed.contract.contractId, signed.signedAt);
     await setStatus('ACTIVE', `Signed ${signed.signedAt}`);
-    await external.sendEmail(leadId, lead.email, 'welcome');
+    await recovery.guard('sendEmail:welcome', () => external.sendEmail(leadId, lead.email, 'welcome'));
     return state;
   } catch (err) {
-    // Reached when an activity exhausted its retries or failed non-retryably, or on cancellation.
+    // Reached on non-retryable failures, an operator abort, a failed signing child, or cancellation.
     await compensate();
     await CancellationScope.nonCancellable(() =>
       setStatus('FAILED', rootCauseMessage(err)),
     );
     throw err;
   }
-}
-
-function rootCauseMessage(err: unknown): string {
-  let current = err;
-  while (current instanceof Error && current.cause instanceof Error) current = current.cause;
-  return current instanceof Error ? current.message : String(current);
 }

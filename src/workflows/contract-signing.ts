@@ -2,6 +2,7 @@ import { condition, defineQuery, defineSignal, setHandler } from '@temporalio/wo
 import type { Duration } from '@temporalio/common';
 import type { Contract, ContractSigned, Quote } from '../shared/types';
 import { external, local } from './activity-proxies';
+import { createOperatorRecovery, type ParkedStep } from './operator-recovery';
 
 export interface ContractSigningInput {
   leadId: string;
@@ -19,6 +20,8 @@ export type SigningStage = 'CREATING_CONTRACT' | 'SENDING_FOR_SIGNATURE' | 'AWAI
 export interface SigningState {
   stage: SigningStage;
   contract?: Contract;
+  /** Set while a step has exhausted its retries and waits for an operator. */
+  needsAttention?: ParkedStep;
 }
 
 export const contractSignedSignal = defineSignal<[ContractSigned]>('contractSigned');
@@ -30,6 +33,8 @@ export const getSigningStateQuery = defineQuery<SigningState>('getSigningState')
  * Runs under its own workflow id (see signingWorkflowId), so it can be reset to its first
  * workflow task without touching the parent's history: the credit check and vehicle reservation
  * are not repeated. Every step here is idempotent, so re-running it from the start is safe.
+ *
+ * Has its own operator recovery: send the `operatorAction` update to this child's workflow id.
  */
 export async function contractSigning(input: ContractSigningInput): Promise<ContractSigningResult> {
   const { leadId, quote, signerEmail } = input;
@@ -41,13 +46,29 @@ export async function contractSigning(input: ContractSigningInput): Promise<Cont
     signature ??= signed;
   });
 
+  // The parent stays AWAITING_SIGNATURE; the lead row in the database shows the parked step.
+  const recovery = createOperatorRecovery({
+    async onPark(parked) {
+      state.needsAttention = parked;
+      await local.updateLeadStatus(leadId, 'NEEDS_ATTENTION', `${parked.step}: ${parked.error}`);
+    },
+    async onResume(parked, command) {
+      state.needsAttention = undefined;
+      await local.updateLeadStatus(leadId, 'AWAITING_SIGNATURE', `Operator ${command.action} at ${parked.step}`);
+    },
+  });
+
   const draft = await local.createContract(leadId, quote);
   state.contract = draft;
 
   state.stage = 'SENDING_FOR_SIGNATURE';
-  const contract = await external.requestSignature(leadId, draft.contractId, signerEmail);
+  const contract = await recovery.guard('requestSignature', () =>
+    external.requestSignature(leadId, draft.contractId, signerEmail),
+  );
   state.contract = contract;
-  await external.sendEmail(leadId, signerEmail, 'contract-ready', { signingUrl: contract.signingUrl });
+  await recovery.guard('sendEmail:contract-ready', () =>
+    external.sendEmail(leadId, signerEmail, 'contract-ready', { signingUrl: contract.signingUrl }),
+  );
 
   state.stage = 'AWAITING_SIGNATURE';
   const signed = await condition(() => signature !== undefined, input.signatureTimeout ?? '14 days');

@@ -77,6 +77,8 @@ curl localhost:3000/leads/lead-1a2b3c4d                                    # liv
 curl -X POST localhost:3000/leads/lead-1a2b3c4d/quote-decision \
      -H 'content-type: application/json' -d '{"accepted": true}'          # signal
 curl -X POST localhost:3000/leads/lead-1a2b3c4d/sign                       # signal to the signing child
+curl -X POST localhost:3000/leads/lead-1a2b3c4d/operator \
+     -H 'content-type: application/json' -d '{"action": "retry"}'          # resume a NEEDS_ATTENTION step
 ```
 
 `GET /leads/:id` also returns the signing child's state (`signing.stage`) once the child has started.
@@ -114,24 +116,34 @@ Scenarios worth showing:
 1. **Transient failures**: `npm run lead -- --auto`. The credit check fails twice and then succeeds.
 2. **Outage, then recovery**: set `{"creditBureau": {"failureRate": 1}}`, start a lead, and watch
    the attempts and the growing backoff (1s, 2s, 4s … 30s) in the UI. Then set `failureRate` back to `0`.
-   The workflow continues from where it was.
-3. **Worker crash**: stop `npm run dev` while a workflow waits for a quote decision, then start it again
+   The workflow continues from where it was. If you leave it down for longer than about 2.5
+   minutes (10 attempts), see the next scenario.
+3. **Out of retries → operator**: keep a service down until its retries run out. The lead goes to
+   `NEEDS_ATTENTION` and `GET /leads/:id` shows the step and the last error in `needsAttention`
+   (or in `signing.needsAttention` for the signing child). Fix the cause, then
+   `POST /leads/:id/operator` with `{"action": "retry"}` to run the step again with a fresh retry
+   policy, or `{"action": "abort"}` to fail the lead and release the vehicle.
+4. **Worker crash**: stop `npm run dev` while a workflow waits for a quote decision, then start it again
    and send the signal. Nothing is lost.
-4. **Timeout**: set inventory `latencyMs` to 15000. The 10-second `startToCloseTimeout` expires and
+5. **Timeout**: set inventory `latencyMs` to 15000. The 10-second `startToCloseTimeout` expires and
    the activity is retried.
-5. **Non-retryable error**: `npm run lead -- --auto --model "Fiat Multipla"`. Inventory returns 404,
+6. **Non-retryable error**: `npm run lead -- --auto --model "Fiat Multipla"`. Inventory returns 404,
    the workflow fails immediately without retrying, and the lead is marked `FAILED`.
-6. **Business rejection (not an error)**: `npm run lead -- --auto --email jan+reject@example.com` ends in `CREDIT_REJECTED`.
-7. **Compensation**: `npm run lead -- --auto --decline`. The reserved vehicle is released (see `vehicle_reservations`).
-8. **Reset only the child**: start a lead with `npm run lead`, accept the quote, and wait for
+7. **Business rejection (not an error)**: `npm run lead -- --auto --email jan+reject@example.com` ends in `CREDIT_REJECTED`.
+8. **Compensation**: `npm run lead -- --auto --decline`. The reserved vehicle is released (see `vehicle_reservations`).
+9. **Reset only the child**: start a lead with `npm run lead`, accept the quote, and wait for
    `AWAITING_SIGNATURE`. Then run `npm run reset -- <leadId>-signing`. The child's old run is
    terminated and a new run creates the contract and sends the e-sign envelope again (both are
    idempotent). The parent keeps waiting. `POST /leads/<leadId>/sign` then completes the lease.
    In `workflow_events`, only `createContract`, `requestSignature` and `sendEmail:contract-ready`
    appear twice.
 
-Retry policies live in `src/workflows/activity-proxies.ts`. When an activity runs out of
-attempts (10 for external calls), the workflow compensates, marks the lead `FAILED` and fails.
+Retry policies live in `src/workflows/activity-proxies.ts`. External calls are wrapped in
+`recovery.guard` (`src/workflows/operator-recovery.ts`). When a call runs out of attempts (10), the
+workflow doesn't fail: it parks the step and waits for an operator, without a timeout. The
+operator command is a workflow **update**, not a signal, so the workflow can reject it when nothing
+is parked; the API returns 409 in that case. Non-retryable failures (such as the unknown-model 404)
+still fail the workflow immediately, because retrying the same input won't help.
 
 ### Tests (mocked activities)
 
@@ -141,8 +153,9 @@ npm test
 
 `src/workflows/onboarding.test.ts` replaces the activities with mocks that throw on purpose. The
 tests check that a flaky service is retried until it succeeds (attempts `[1, 2, 3]`), that a
-service that stays down is called exactly `maximumAttempts` times, that a non-retryable error is
-called once, that the 7-day quote timeout releases the vehicle, and that an expired signature in
+service that stays down is called `maximumAttempts` times and then parked until an operator sends
+`retry`, that an operator `abort` fails the lead and releases the vehicle, that a non-retryable
+error is called once, that the 7-day quote timeout releases the vehicle, and that an expired signature in
 the child workflow leads to compensation in the parent. The time-skipping server
 makes the backoffs and timers pass instantly.
 

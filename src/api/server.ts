@@ -1,4 +1,4 @@
-import { Client, WorkflowNotFoundError } from '@temporalio/client';
+import { Client, WorkflowNotFoundError, WorkflowUpdateFailedError } from '@temporalio/client';
 import express, { type ErrorRequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config';
@@ -10,7 +10,9 @@ import {
   contractSignedSignal,
   getSigningStateQuery,
   getStateQuery,
+  operatorActionUpdate,
   quoteDecisionSignal,
+  type OperatorCommand,
 } from '../workflows';
 
 async function main() {
@@ -72,9 +74,38 @@ async function main() {
     res.status(202).json({ ok: true });
   });
 
+  /**
+   * Operator decision for a step that exhausted its retries (status NEEDS_ATTENTION).
+   * Body: { action: "retry" | "abort", note?: string }. Goes to whichever workflow is parked: the
+   * lead's onboarding workflow or its signing child.
+   */
+  app.post('/leads/:id/operator', async (req, res) => {
+    const command = req.body as OperatorCommand;
+    const parent = client.workflow.getHandle(req.params.id);
+    const state = await parent.query(getStateQuery);
+
+    let target = state.needsAttention ? parent : undefined;
+    if (!target && state.signingWorkflowId) {
+      const child = client.workflow.getHandle(state.signingWorkflowId);
+      if ((await child.query(getSigningStateQuery)).needsAttention) target = child;
+    }
+    if (!target) {
+      res.status(409).json({ error: 'Nothing is waiting for an operator' });
+      return;
+    }
+
+    const parked = await target.executeUpdate(operatorActionUpdate, { args: [command] });
+    res.json({ workflowId: target.workflowId, action: command.action, parked });
+  });
+
   const onError: ErrorRequestHandler = (err, _req, res, _next) => {
     if (err instanceof WorkflowNotFoundError) {
       res.status(404).json({ error: 'Lead not found' });
+      return;
+    }
+    if (err instanceof WorkflowUpdateFailedError) {
+      // Rejected by the update validator, e.g. the step was resumed in the meantime or bad action
+      res.status(409).json({ error: err.cause?.message ?? err.message });
       return;
     }
     console.error(err);

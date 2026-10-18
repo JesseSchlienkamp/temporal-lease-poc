@@ -5,7 +5,7 @@
  *   npm test
  */
 import { Context } from '@temporalio/activity';
-import { WorkflowFailedError, WorkflowNotFoundError } from '@temporalio/client';
+import { WorkflowFailedError, WorkflowNotFoundError, WorkflowUpdateFailedError } from '@temporalio/client';
 import { ApplicationFailure } from '@temporalio/common';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Runtime, DefaultLogger, Worker } from '@temporalio/worker';
@@ -15,7 +15,8 @@ import type * as activities from '../activities';
 import { signingWorkflowId } from '../shared/ids';
 import type { LeadInput, OnboardingStatus } from '../shared/types';
 import { contractSignedSignal } from './contract-signing';
-import { carLeaseOnboarding, quoteDecisionSignal } from './onboarding';
+import { carLeaseOnboarding, getStateQuery, quoteDecisionSignal } from './onboarding';
+import { operatorActionUpdate } from './operator-recovery';
 
 type Activities = typeof activities;
 
@@ -133,21 +134,73 @@ describe('carLeaseOnboarding', () => {
     );
   });
 
-  it('gives up after max attempts when a service stays down, and releases nothing it did not reserve', async () => {
+  it('parks a step that stays down after max attempts, and resumes it on operator retry', async () => {
+    let down = true;
     const mock = mockActivities({
       runCreditCheck: async () => {
-        throw unavailable();
+        if (down) throw unavailable();
+        return { score: 720, decision: 'APPROVED', bureauReference: 'CB-1' };
       },
     });
 
-    await assert.rejects(
-      run(mock.activities, (taskQueue) =>
-        env.client.workflow.execute(carLeaseOnboarding, { taskQueue, workflowId: `lead-down-${n}`, args: [lead] }),
-      ),
-      WorkflowFailedError,
-    );
-    assert.equal(mock.callsTo('runCreditCheck').length, 10); // maximumAttempts
-    assert.equal(mock.callsTo('releaseVehicle').length, 0);
+    const result = await run(mock.activities, async (taskQueue) => {
+      const handle = await env.client.workflow.start(carLeaseOnboarding, {
+        taskQueue,
+        workflowId: `lead-down-${n}`,
+        args: [lead],
+      });
+      await handle.signal(quoteDecisionSignal, { accepted: true });
+
+      // Nothing is parked yet: the update validator rejects the command.
+      await assert.rejects(
+        handle.executeUpdate(operatorActionUpdate, { args: [{ action: 'retry' }] }),
+        WorkflowUpdateFailedError,
+      );
+
+      await env.sleep('10 minutes'); // fast-forward through the backoff of all 10 attempts
+      const parked = await handle.query(getStateQuery);
+      assert.equal(parked.status, 'NEEDS_ATTENTION');
+      assert.equal(parked.needsAttention?.step, 'runCreditCheck');
+      assert.equal(mock.callsTo('runCreditCheck').length, 10); // maximumAttempts
+
+      down = false; // the operator fixed the cause
+      await handle.executeUpdate(operatorActionUpdate, { args: [{ action: 'retry', note: 'bureau is back' }] });
+      await signWhenChildStarts(handle.workflowId);
+      return handle.result();
+    });
+
+    assert.equal(result.status, 'ACTIVE');
+    assert.equal(result.needsAttention, undefined);
+    assert.equal(mock.callsTo('runCreditCheck').length, 11);
+    assert.ok(mock.statuses.includes('NEEDS_ATTENTION'));
+  });
+
+  it('fails and compensates when the operator aborts a parked step', async () => {
+    const mock = mockActivities({
+      sendEmail: async (_leadId, _to, template) => {
+        if (template === 'quote') throw unavailable();
+      },
+    });
+
+    const failure = await run(mock.activities, async (taskQueue) => {
+      const handle = await env.client.workflow.start(carLeaseOnboarding, {
+        taskQueue,
+        workflowId: `lead-abort-${n}`,
+        args: [lead],
+      });
+      await env.sleep('10 minutes');
+      assert.equal((await handle.query(getStateQuery)).needsAttention?.step, 'sendEmail:quote');
+
+      await handle.executeUpdate(operatorActionUpdate, { args: [{ action: 'abort', note: 'email provider down' }] });
+      return handle.result().then(
+        () => assert.fail('expected the workflow to fail'),
+        (err: unknown) => err,
+      );
+    });
+
+    assert.ok(failure instanceof WorkflowFailedError);
+    assert.match(String(failure.cause?.message), /Aborted by operator at sendEmail:quote: email provider down/);
+    assert.equal(mock.callsTo('releaseVehicle').length, 1); // the vehicle was already reserved
     assert.equal(mock.statuses.at(-1), 'FAILED');
   });
 
