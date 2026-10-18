@@ -1,8 +1,10 @@
 import {
   CancellationScope,
+  ChildWorkflowFailure,
   condition,
   defineQuery,
   defineSignal,
+  isCancellation,
   log,
   setHandler,
   startChild,
@@ -129,24 +131,35 @@ export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOpt
 
     // 7. Contract, payment details (agent form if the IBAN is missing or wrong) and e-signature
     //    in a child workflow (see contract-signing.ts)
-    const signing = await startChild(contractSigning, {
-      workflowId: signingWorkflowId(leadId),
-      args: [
-        {
-          leadId,
-          quote,
-          signerEmail: lead.email,
-          customerName: `${lead.firstName} ${lead.lastName}`,
-          iban: lead.iban,
-          signatureTimeout: options.signatureTimeout,
-        },
-      ],
-    });
-    state.signingWorkflowId = signing.workflowId;
-    await setStatus('CONTRACTING', `Signing workflow ${signing.workflowId}`);
+    //    If the child fails (e.g. the e-sign provider is down), the lead parks as NEEDS_ATTENTION
+    //    with the vehicle still reserved. Operator `retry` starts a fresh child run under the same
+    //    id; `abort` fails the lead, which releases the vehicle.
+    let signingRun = 0;
+    const signed = await recovery.guard(
+      'contractSigning',
+      async () => {
+        const signing = await startChild(contractSigning, {
+          workflowId: signingWorkflowId(leadId),
+          args: [
+            {
+              leadId,
+              quote,
+              signerEmail: lead.email,
+              customerName: `${lead.firstName} ${lead.lastName}`,
+              iban: lead.iban,
+              signatureTimeout: options.signatureTimeout,
+            },
+          ],
+        });
+        state.signingWorkflowId = signing.workflowId;
+        await setStatus('CONTRACTING', `Signing workflow ${signing.workflowId} (run ${++signingRun})`);
 
-    // 8. Wait for the child. If the child is reset, this follows its new run.
-    const signed = await signing.result();
+        // 8. Wait for the child. If the child is reset while running, this follows its new run.
+        return signing.result();
+      },
+      // A child that failed parks the lead; a cancelled lead still compensates as usual.
+      { parkOn: (err) => err instanceof ChildWorkflowFailure && !isCancellation(err) },
+    );
     state.contract = signed.contract;
     state.mandate = signed.mandate;
     if (signed.outcome === 'EXPIRED') {

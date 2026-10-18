@@ -70,12 +70,20 @@ export function createOperatorRecovery(hooks: RecoveryHooks) {
     },
   );
 
-  async function guard<T>(step: string, fn: () => Promise<T>): Promise<T> {
+  /**
+   * @param parkOn decides which failures park the step; by default activities that exhausted their
+   *               retries on retryable errors.
+   */
+  async function guard<T>(
+    step: string,
+    fn: () => Promise<T>,
+    { parkOn = canRetryLater }: { parkOn?: (err: unknown) => boolean } = {},
+  ): Promise<T> {
     for (;;) {
       try {
         return await fn();
       } catch (err) {
-        if (!canRetryLater(err)) throw err;
+        if (!parkOn(err)) throw err;
 
         parked = { step, error: rootCauseMessage(err), since: new Date().toISOString() };
         await hooks.onPark(parked);
@@ -93,7 +101,7 @@ export function createOperatorRecovery(hooks: RecoveryHooks) {
             'AbortedByOperator',
           );
         }
-        // retry: loop and call the activity again
+        // retry: loop and call fn again
       }
     }
   }

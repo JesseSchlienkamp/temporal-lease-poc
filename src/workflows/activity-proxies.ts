@@ -20,3 +20,16 @@ export const external = proxyActivities<typeof activities>({
     nonRetryableErrorTypes: ['ExternalServiceRejected'],
   },
 });
+
+// The e-signature provider: a short leash. Three attempts, then the activity fails for real and
+// takes the signing child down with it (no operator parking inside the child). The parent then
+// decides: retry the whole signing child, or abort the lead.
+export const esign = proxyActivities<typeof activities>({
+  startToCloseTimeout: '10 seconds',
+  retry: {
+    initialInterval: '1 second',
+    backoffCoefficient: 2,
+    maximumAttempts: 3,
+    nonRetryableErrorTypes: ['ExternalServiceRejected'],
+  },
+});

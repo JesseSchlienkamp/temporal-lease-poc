@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type * as activities from '../activities';
 import { signingWorkflowId } from '../shared/ids';
-import type { LeadInput, OnboardingStatus } from '../shared/types';
+import type { LeadInput, OnboardingStatus, PaymentMandate } from '../shared/types';
 import type { SigningState } from './contract-signing';
 import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from './contract-signing';
 import { carLeaseOnboarding, getStateQuery, quoteDecisionSignal } from './onboarding';
@@ -37,6 +37,7 @@ const unavailable = () => ApplicationFailure.retryable('HTTP 503 (mocked)', 'Ext
 function mockActivities(overrides: Partial<Activities> = {}) {
   const calls: { name: string; attempt: number }[] = [];
   const statuses: OnboardingStatus[] = [];
+  let savedMandate: PaymentMandate | null = null; // like the payment_mandates table
   const happy: Activities = {
     saveLead: async () => {},
     updateLeadStatus: async (_id, status) => {
@@ -54,7 +55,8 @@ function mockActivities(overrides: Partial<Activities> = {}) {
     activateLease: async () => {},
     sendEmail: async () => {},
     verifyBankAccount: async () => ({ result: 'MATCH', registeredName: 'J. Jansen' }),
-    savePaymentMandate: async (_id, details) => ({ mandateReference: 'MANDATE-1', ...details }),
+    savePaymentMandate: async (_id, details) => (savedMandate = { mandateReference: 'MANDATE-1', ...details }),
+    findPaymentMandate: async () => savedMandate,
     openAgentTask: async () => {},
     completeAgentTask: async () => {},
   };
@@ -357,5 +359,75 @@ describe('carLeaseOnboarding', () => {
       await handle.terminate('test done');
     });
     assert.equal(mock.callsTo('requestSignature').length, 0);
+  });
+
+  it('fails the signing child after 3 e-sign errors; the parent keeps the car and retries signing', async () => {
+    let esignDown = true;
+    const badGateway = () => ApplicationFailure.retryable('HTTP 502 (mocked)', 'ExternalServiceUnavailable');
+    const mock = mockActivities({
+      requestSignature: async () => {
+        if (esignDown) throw badGateway();
+        return { contractId: 'C-1', envelopeId: 'ENV-1', signingUrl: 'https://sign' };
+      },
+    });
+
+    const result = await run(mock.activities, async (taskQueue) => {
+      const handle = await env.client.workflow.start(carLeaseOnboarding, {
+        taskQueue,
+        workflowId: `lead-esign-${n}`,
+        args: [lead],
+      });
+      await handle.signal(quoteDecisionSignal, { accepted: true });
+      const child = env.client.workflow.getHandle(signingWorkflowId(handle.workflowId));
+
+      await env.sleep('1 minute'); // fast-forward through the e-sign backoff (1s, 2s)
+      const parked = await handle.query(getStateQuery);
+      assert.equal(parked.status, 'NEEDS_ATTENTION');
+      assert.equal(parked.needsAttention?.step, 'contractSigning');
+      assert.match(parked.needsAttention!.error, /HTTP 502/);
+      assert.equal((await child.describe()).status.name, 'FAILED');
+      assert.equal(mock.callsTo('requestSignature').length, 3);
+      assert.equal(mock.callsTo('releaseVehicle').length, 0); // the car stays reserved while parked
+
+      esignDown = false; // the provider is back
+      await handle.executeUpdate(operatorActionUpdate, { args: [{ action: 'retry' }] });
+      await waitForSigning(handle.workflowId, (s) => s.stage === 'AWAITING_SIGNATURE');
+      await signWhenChildStarts(handle.workflowId);
+      return handle.result();
+    });
+
+    assert.equal(result.status, 'ACTIVE');
+    assert.equal(mock.callsTo('requestSignature').length, 4);
+    assert.equal(mock.callsTo('createContract').length, 2); // one per child run (idempotent)
+    assert.equal(mock.callsTo('verifyBankAccount').length, 1); // the retry reuses the verified mandate
+    assert.equal(mock.callsTo('runCreditCheck').length, 1);
+    assert.equal(mock.callsTo('reserveVehicle').length, 1);
+    assert.equal(mock.callsTo('releaseVehicle').length, 0);
+  });
+
+  it('releases the car when the operator aborts a failed signing', async () => {
+    const mock = mockActivities({
+      requestSignature: async () => {
+        throw ApplicationFailure.retryable('HTTP 502 (mocked)', 'ExternalServiceUnavailable');
+      },
+    });
+
+    await assert.rejects(
+      run(mock.activities, async (taskQueue) => {
+        const handle = await env.client.workflow.start(carLeaseOnboarding, {
+          taskQueue,
+          workflowId: `lead-esign-abort-${n}`,
+          args: [lead],
+        });
+        await handle.signal(quoteDecisionSignal, { accepted: true });
+        await env.sleep('1 minute');
+        assert.equal((await handle.query(getStateQuery)).needsAttention?.step, 'contractSigning');
+        await handle.executeUpdate(operatorActionUpdate, { args: [{ action: 'abort', note: 'provider outage' }] });
+        return handle.result();
+      }),
+      WorkflowFailedError,
+    );
+    assert.equal(mock.callsTo('releaseVehicle').length, 1);
+    assert.equal(mock.statuses.at(-1), 'FAILED');
   });
 });

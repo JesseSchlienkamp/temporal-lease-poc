@@ -18,7 +18,7 @@ import type {
   PaymentMandate,
   Quote,
 } from '../shared/types';
-import { external, local } from './activity-proxies';
+import { esign, external, local } from './activity-proxies';
 import { createOperatorRecovery, type ParkedStep } from './operator-recovery';
 
 export interface ContractSigningInput {
@@ -167,6 +167,10 @@ export async function contractSigning(input: ContractSigningInput): Promise<Cont
 
   /** Verifies the application's IBAN; while it is missing or rejected, an agent form is open. */
   async function collectPaymentDetails(): Promise<PaymentMandate> {
+    // A previous run of this child (retried by the parent, or reset) already verified an IBAN.
+    const existing = await local.findPaymentMandate(leadId);
+    if (existing) return existing;
+
     let candidate: PaymentDetails | undefined = input.iban
       ? { iban: input.iban, accountHolder: customerName }
       : undefined;
@@ -228,9 +232,8 @@ export async function contractSigning(input: ContractSigningInput): Promise<Cont
   state.mandate = mandate;
 
   state.stage = 'SENDING_FOR_SIGNATURE';
-  const contract = await recovery.guard('requestSignature', () =>
-    external.requestSignature(leadId, draft.contractId, signerEmail),
-  );
+  // Not guarded: after 3 failed attempts this child fails, and the parent decides what happens next.
+  const contract = await esign.requestSignature(leadId, draft.contractId, signerEmail);
   state.contract = contract;
   await recovery.guard('sendEmail:contract-ready', () =>
     external.sendEmail(leadId, signerEmail, 'contract-ready', { signingUrl: contract.signingUrl }),

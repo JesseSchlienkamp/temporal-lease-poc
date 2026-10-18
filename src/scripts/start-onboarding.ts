@@ -7,6 +7,8 @@
  * Scenarios (combine with --auto):
  *   --scenario happy        (default) valid IBAN in the application, runs straight through
  *   --scenario agent-form   no IBAN: the signing child opens a form at http://localhost:3000/agent
+ *   --scenario esign-outage switches the mock e-sign provider down first: the signing child fails
+ *                           after 3 x 502; switch it back up and retry the signing (instructions printed)
  *   --iban <value>          use this IBAN instead, e.g. NL20INGB0001234567 (someone else's -> form)
  *
  *   npm run lead -- --auto --decline              # customer declines -> reservation is released
@@ -32,6 +34,7 @@ import {
 const SCENARIOS = {
   happy: { iban: 'NL91ABNA0417164300' },
   'agent-form': { iban: undefined },
+  'esign-outage': { iban: 'NL91ABNA0417164300', esignDown: true },
 } as const;
 type Scenario = keyof typeof SCENARIOS;
 
@@ -54,7 +57,7 @@ if (!(args.scenario in SCENARIOS)) {
   console.error(`Unknown scenario "${args.scenario}". Known: ${Object.keys(SCENARIOS).join(', ')}`);
   process.exit(1);
 }
-const scenario = SCENARIOS[args.scenario as Scenario];
+const scenario: { iban?: string; esignDown?: boolean } = SCENARIOS[args.scenario as Scenario];
 
 async function main() {
   const client = new Client({ connection: await connectClient(), namespace: config.temporal.namespace });
@@ -68,6 +71,16 @@ async function main() {
     vehicleModel: args.model,
     iban: args.iban ?? scenario.iban,
   };
+  if (scenario.esignDown) {
+    const res = await fetch(`${config.mockServicesUrl}/admin/chaos`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ esign: { failureRate: 1, failFirstN: 0 } }),
+    });
+    if (!res.ok) throw new Error(`Could not switch the e-sign mock down: HTTP ${res.status}`);
+    console.log('E-sign provider switched DOWN (every call returns 502)');
+  }
+
   const leadId = `lead-${randomUUID().slice(0, 8)}`;
   const handle = await client.workflow.start(carLeaseOnboarding, {
     taskQueue: config.taskQueue,
@@ -100,6 +113,14 @@ async function main() {
       console.log(`  status: ${(last = current)}`);
       if (signing?.stage === 'AWAITING_AGENT') {
         console.log(`    ↳ ${signing.agentForm?.reason}. Waiting for an agent: http://localhost:${config.apiPort}/agent`);
+      }
+      if (state.needsAttention) {
+        console.log(`    ↳ ${state.needsAttention.step} failed: ${state.needsAttention.error}`);
+        console.log(`    ↳ fix it, then retry (or send "abort"):`);
+        if (state.needsAttention.step === 'contractSigning') console.log(`        npm run chaos -- esign up`);
+        console.log(
+          `        curl -X POST localhost:${config.apiPort}/leads/${leadId}/operator -H 'content-type: application/json' -d '{"action":"retry"}'`,
+        );
       }
     }
 

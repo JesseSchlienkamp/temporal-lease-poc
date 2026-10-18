@@ -27,7 +27,7 @@ interface Chaos {
 const DEFAULT_CHAOS: Record<ServiceName, Chaos> = {
   creditBureau: { failFirstN: 2, failureRate: 0, latencyMs: 300, errorStatus: 503 },
   inventory: { failFirstN: 0, failureRate: 0.3, latencyMs: 800, errorStatus: 500 },
-  esign: { failFirstN: 1, failureRate: 0, latencyMs: 200, errorStatus: 502 },
+  esign: { failFirstN: 0, failureRate: 0, latencyMs: 200, errorStatus: 502 },
   notifications: { failFirstN: 0, failureRate: 0.2, latencyMs: 100, errorStatus: 503 },
   bank: { failFirstN: 0, failureRate: 0, latencyMs: 300, errorStatus: 503 },
 };

@@ -18,8 +18,11 @@ flowchart LR
     F[Contract] --> P{IBAN present<br/>and verified? 🔁}
     P -->|no| AG[Agent form 👤]
     AG -->|submit| P
-    P -->|yes| F1[Mandate + e-sign 🔁] --> F2[Wait for signature ≤ 14 days]
+    P -->|yes| F1[Mandate + e-sign 🔁 ×3] --> F2[Wait for signature ≤ 14 days]
   end
+  F1 -.->|3 × 502: child fails| R{operator}
+  R -.->|retry: new child run| F
+  R -.->|abort| X5[release vehicle ↩]
   E -->|signal: quoteDecision<br/>wait ≤ 7 days| F
   F2 -->|signal: contractSigned| G[ACTIVE + welcome email 🔁]
   F2 -->|expired| X4[release vehicle ↩]
@@ -79,7 +82,7 @@ src/
   api/agent-page.ts             agent inbox page (GET /agent)
   shared/iban.ts                IBAN format + mod-97 checksum (also runs in the workflow sandbox)
   worker.ts                     Temporal worker
-  scripts/                      CLI demo driver, DB viewer, workflow reset
+  scripts/                      CLI demo driver, DB viewer, workflow reset, chaos switch
 infra/                          Bicep + deploy script for Azure Container Apps
 Dockerfile, docker-compose.yml
 ```
@@ -90,7 +93,34 @@ Dockerfile, docker-compose.yml
 npm run lead -- --auto --scenario happy        # valid IBAN in the application: runs straight through to ACTIVE
 npm run lead -- --auto --scenario agent-form   # no IBAN: open http://localhost:3000/agent and fill in the form
 npm run lead -- --auto --iban NL20INGB0001234567   # IBAN that fails verification: the form opens with the reason
+npm run lead -- --auto --scenario esign-outage # e-sign provider down: the signing child fails, then you fix and retry
 ```
+
+### E-sign outage: the child fails, you fix the API and retry
+
+1. `npm run lead -- --auto --scenario esign-outage` switches the mock e-sign provider down (every
+   call returns 502) and starts a lead with a valid IBAN.
+2. The e-sign call is allowed **3 attempts** (`esign` in `activity-proxies.ts`). After the third
+   502 the signing child **fails**; the Temporal UI shows `<leadId>-signing` as Failed with the 502.
+3. The parent doesn't fail. It goes to `NEEDS_ATTENTION` (step `contractSigning`), and the
+   vehicle **stays reserved**. The CLI prints the next two commands:
+   ```bash
+   npm run chaos -- esign up                                   # "fix" the API: 200s again
+   curl -X POST localhost:3000/leads/<leadId>/operator \
+        -H 'content-type: application/json' -d '{"action":"retry"}'
+   ```
+4. `retry` starts a **new run** of the signing child under the same ID. It reuses the IBAN mandate
+   the first run already verified, so no agent form and no second bank check. It then sends the
+   contract and the lead finishes `ACTIVE`. The UI shows the failed run next to the completed one.
+   The credit check and vehicle reservation are not repeated.
+5. `{"action": "abort"}` instead fails the lead and releases the vehicle.
+
+Why the parent waits instead of failing too: if the parent failed, it would release the car right
+away, and a later reset would continue as if the car were still reserved. Resetting the failed
+child afterwards doesn't help either, because the parent has already received the failure.
+
+`npm run chaos` shows the mock settings, `npm run chaos -- <service> down|up` switches any mock
+service, and `npm run chaos -- reset` restores the defaults.
 
 ## Run locally
 
@@ -148,7 +178,7 @@ Default chaos settings in the mock services:
 |---------------|----------------------------------------------|--------------------------|
 | credit bureau | fails the **first 2 calls** per lead (503)   | deterministic retries    |
 | inventory     | **30 %** of calls fail (500), 800 ms latency | random transient errors  |
-| e-sign        | fails the **first call** per contract (502)  | idempotent retry         |
+| e-sign        | **never fails** by default (502 when down)   | `--scenario esign-outage` / `npm run chaos -- esign down` |
 | notifications | **20 %** of calls fail (503)                 | random transient errors  |
 
 Retries show up in three places: the Temporal UI (the *Pending Activities* panel and the
@@ -211,8 +241,9 @@ tests check that a flaky service is retried until it succeeds (attempts `[1, 2, 
 service that stays down is called `maximumAttempts` times and then parked until an operator sends
 `retry`, that an operator `abort` fails the lead and releases the vehicle, that a non-retryable
 error is called once, that the 7-day quote timeout releases the vehicle, that an expired signature in
-the child workflow leads to compensation in the parent, and that the agent form keeps reopening
-until a valid IBAN is submitted. The time-skipping server
+the child workflow leads to compensation in the parent, that the agent form keeps reopening
+until a valid IBAN is submitted, and that an e-sign outage fails the child after 3 attempts while
+the parent keeps the car and retries signing (or releases the car on abort). The time-skipping server
 makes the backoffs and timers pass instantly.
 
 ## Deploy to Azure Container Apps

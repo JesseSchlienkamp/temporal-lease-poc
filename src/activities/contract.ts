@@ -15,7 +15,7 @@ export async function createContract(leadId: string, quote: Quote): Promise<Cont
   });
 }
 
-/** Sends the contract to the (flaky) e-signature provider. By default it fails the first call per contract. */
+/** Sends the contract to the e-signature provider. Reliable by default; `npm run chaos -- esign down` makes it return 502. */
 export async function requestSignature(leadId: string, contractId: string, email: string): Promise<Contract> {
   return tracked(leadId, 'requestSignature', async () => {
     const { envelopeId, signingUrl } = await callExternal<{ envelopeId: string; signingUrl: string }>(
