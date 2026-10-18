@@ -319,21 +319,37 @@ operator command is a workflow **update**, not a signal, so the workflow can rej
 is parked; the API returns 409 in that case. Non-retryable failures (such as the unknown-model 404)
 still fail the workflow immediately, because retrying the same input won't help.
 
-### Tests (mocked activities)
+### Tests and coverage
 
 ```bash
-npm test
+npm test                # all tests: activities + workflows (~80 tests)
+npm run test:coverage   # same, plus a coverage report (terminal + coverage/index.html)
 ```
 
-`src/temporal/workflows/carLeaseOnboarding/carLeaseOnboarding.workflow.test.ts` replaces the activities with mocks that throw on purpose. The
-tests check that a flaky service is retried until it succeeds (attempts `[1, 2, 3]`), that a
-service that stays down is called `maximumAttempts` times and then parked until an operator sends
-`retry`, that an operator `abort` fails the lead and releases the vehicle, that a non-retryable
-error is called once, that the 7-day quote timeout releases the vehicle, that an expired signature in
-the child workflow leads to compensation in the parent, that the agent form keeps reopening
-until a valid IBAN is submitted, and that an e-sign outage fails the child after 3 attempts while
-the parent keeps the car and retries signing (or releases the car on abort). The time-skipping server
-makes the backoffs and timers pass instantly.
+**Workflow tests:** `src/temporal/workflows/carLeaseOnboarding/carLeaseOnboarding.workflow.test.ts`
+runs both workflows on Temporal's time-skipping test server, with mocked activities that throw on
+purpose. They check that:
+- a flaky service is retried until it succeeds (attempts `[1, 2, 3]`);
+- a service that stays down is parked after `maximumAttempts`, and `retry` or `abort` works;
+- a non-retryable error is called once;
+- the quote and signature timeouts compensate;
+- the agent form keeps reopening until a valid IBAN arrives;
+- an e-sign outage fails the child and the parent retries signing.
+
+**Activity tests:** each activity has its own `<name>.activity.test.ts` next to it. They use
+Temporal's `MockActivityEnvironment` (activity context, attempt number), an in-memory SQLite and a
+fake `fetch`, so nothing external is needed. `src/temporal/activities/common/testing.ts` holds the
+helpers.
+
+**Coverage** is measured in two ways, merged into one report:
+- **Activities: c8**, with `all: true` so untested files show up as 0%.
+- **Workflows: `@temporalio/nyc-test-coverage`.** Workflow code runs in Temporal's sandbox, out of
+  reach of ordinary coverage tools; the plugin instruments the workflow bundle itself.
+
+`test:coverage` fails below 95% statements, lines or functions. Branches aren't enforced: for the
+activities, c8 reports phantom branches on `import` lines, function declarations and multi-line SQL
+strings. Those come from the CommonJS wrapper esbuild (tsx) adds around each file. Every real branch
+in the activities is tested, and the workflow branch figures come from istanbul and are accurate.
 
 ## Deploy to Azure Container Apps
 
