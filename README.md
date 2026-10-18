@@ -82,10 +82,44 @@ src/
   api/agent-page.ts             agent inbox page (GET /agent)
   shared/iban.ts                IBAN format + mod-97 checksum (also runs in the workflow sandbox)
   worker.ts                     Temporal worker
+  demo/                         interactive demo CLI (npm run demo): scenarios, runner, summary
   scripts/                      CLI demo driver, DB viewer, workflow reset, chaos switch
 infra/                          Bicep + deploy script for Azure Container Apps
 Dockerfile, docker-compose.yml
 ```
+
+## Demo CLI
+
+```bash
+npm run demo                          # interactive menu of every test path
+npm run demo -- esign-outage          # run one scenario directly
+npm run demo -- esign-outage --yes    # non-interactive: every prompt takes its default answer
+npm run demo -- --list                # scenario ids
+```
+
+When it starts, it checks that Temporal, the worker, the mock services and the API are up, and
+tells you which command to run for anything that's missing. Pick a scenario to see what to
+expect. The CLI then starts the lead, plays the customer (accepting the quote and signing), and
+stops where a human is needed:
+
+| Group                 | Scenario                                     | You do                                    |
+|-----------------------|----------------------------------------------|-------------------------------------------|
+| Happy path            | Happy path                                   | nothing; watch the retries                |
+| Human in the loop     | Missing IBAN → agent form                    | submit IBANs from the terminal or `/agent` |
+|                       | Application IBAN fails verification          | same form, opened with the bank's reason  |
+|                       | Customer declines the quote                  | nothing; the car is released              |
+| Failure & recovery    | E-sign outage → child fails → fix and retry  | choose: fix + retry, retry, or abort      |
+|                       | Credit bureau outage → retries → operator    | recover mid-way, or after ~2.5 min        |
+|                       | Hanging inventory → activity timeout         | nothing; watch the 10 s timeout           |
+|                       | Unknown vehicle model → non-retryable        | nothing; fails fast                       |
+|                       | Credit rejected (business outcome)           | nothing                                   |
+| Temporal power tools  | Reset only the signing child                 | confirm the reset                         |
+|                       | Worker crash while waiting                   | stop and restart `npm run dev`            |
+
+Each run ends with a summary: the final status, a timeline, the retries and re-runs per step (read
+from the Temporal history), every workflow run, and links to the Temporal UI and `db:show`. Mock
+services are reset to their defaults before and after every scenario, and on Ctrl+C, so a scenario
+never leaves a service down.
 
 ## Scenarios
 
@@ -132,7 +166,8 @@ cp .env.example .env          # optional, the defaults work locally
 
 npm run temporal              # terminal 1: Temporal dev server + UI on http://localhost:8233
 npm run dev                   # terminal 2: mock services (:8081), worker, API (:3000)
-npm run lead -- --auto        # terminal 3: run one onboarding, playing the customer
+npm run demo                  # terminal 3: interactive menu of every test path
+npm run lead -- --auto        # or: run one onboarding from a script, playing the customer
 npm run db:show               # inspect the SQLite database
 ```
 
