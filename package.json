@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "temporal": "temporal server start-dev --db-filename data/temporal.db",
+    "temporal": "mkdir -p data && temporal server start-dev --db-filename data/temporal.db",
     "dev": "concurrently -n mocks,worker,api -c magenta,cyan,green \"npm:dev:mocks\" \"npm:dev:worker\" \"npm:dev:api\"",
     "dev:worker": "tsx watch src/worker.ts",
     "dev:api": "tsx watch src/api/server.ts",
