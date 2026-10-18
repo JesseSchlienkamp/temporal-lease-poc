@@ -90,6 +90,9 @@ Dockerfile, docker-compose.yml
 
 ## Demo CLI
 
+Every scenario is also written up in [docs/scenarios](docs/scenarios/README.md): what happens, how
+Temporal is involved, and how to resolve it.
+
 ```bash
 npm run demo                          # interactive menu of every test path
 npm run demo -- esign-outage          # run one scenario directly
