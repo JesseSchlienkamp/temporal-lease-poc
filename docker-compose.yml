@@ -1,0 +1,44 @@
+# Full stack in containers:  docker compose up --build
+#   Temporal UI  http://localhost:8233
+#   API          http://localhost:3000
+#   Mocks/chaos  http://localhost:8081/admin/chaos
+services:
+  temporal:
+    image: temporalio/temporal:1.9.1
+    command: ["server", "start-dev", "--ip", "0.0.0.0"]
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+
+  mocks:
+    build: .
+    command: ["node", "dist/mock-services/server.js"]
+    environment:
+      MOCK_PORT: "8081"
+    ports:
+      - "8081:8081"
+
+  worker:
+    build: .
+    command: ["node", "dist/worker.js"]
+    restart: on-failure # retries until the Temporal server accepts connections
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      MOCK_SERVICES_URL: http://mocks:8081
+    volumes:
+      - app-data:/app/data
+    depends_on: [temporal, mocks]
+
+  api:
+    build: .
+    command: ["node", "dist/api/server.js"]
+    restart: on-failure
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on: [temporal]
+
+volumes:
+  app-data:
