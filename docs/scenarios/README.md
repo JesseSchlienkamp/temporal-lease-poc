@@ -31,3 +31,6 @@ needs a reset: a reset replays the original input, so it can't fix bad data.
 | 09 | [Credit rejected](09-credit-rejected.md) | Business outcome |
 | 10 | [Reset the signing child](10-reset-child.md) | Bug (tooling) |
 | 11 | [Worker crash](11-worker-crash.md) | Infrastructure |
+
+---
+Next: [6 · Deployment →](../6-deployment.md) · Back to the [README](../../README.md)
