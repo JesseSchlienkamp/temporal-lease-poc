@@ -62,6 +62,30 @@ CREATE TABLE IF NOT EXISTS contracts (
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- SEPA direct-debit mandate for the monthly payments, created once the IBAN is verified.
+CREATE TABLE IF NOT EXISTS payment_mandates (
+  lead_id            TEXT PRIMARY KEY REFERENCES leads(id),
+  mandate_reference  TEXT NOT NULL,
+  iban               TEXT NOT NULL,
+  account_holder     TEXT NOT NULL,
+  source             TEXT NOT NULL,           -- APPLICATION | AGENT
+  created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Work items for human agents, e.g. "collect a valid IBAN". Reopened (attempts + 1) when a
+-- submitted value fails verification.
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id           TEXT PRIMARY KEY,              -- <workflowId>:<type>
+  lead_id      TEXT NOT NULL REFERENCES leads(id),
+  workflow_id  TEXT NOT NULL,
+  type         TEXT NOT NULL,                 -- COLLECT_IBAN
+  status       TEXT NOT NULL,                 -- OPEN | COMPLETED
+  reason       TEXT,
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Audit trail: one row per activity attempt, so retries are visible in the database too.
 CREATE TABLE IF NOT EXISTS workflow_events (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

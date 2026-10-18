@@ -10,6 +10,8 @@ const tables: [string, string][] = [
   ['vehicle_reservations', 'lead_id'],
   ['quotes', 'lead_id'],
   ['contracts', 'lead_id'],
+  ['payment_mandates', 'lead_id'],
+  ['agent_tasks', 'lead_id'],
   ['workflow_events', 'lead_id'],
 ];
 

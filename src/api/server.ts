@@ -12,8 +12,11 @@ import {
   getStateQuery,
   operatorActionUpdate,
   quoteDecisionSignal,
+  submitPaymentDetailsUpdate,
+  type AgentForm,
   type OperatorCommand,
 } from '../workflows';
+import { agentPage } from './agent-page';
 
 async function main() {
   const client = new Client({ connection: await connectClient(), namespace: config.temporal.namespace });
@@ -96,6 +99,47 @@ async function main() {
 
     const parked = await target.executeUpdate(operatorActionUpdate, { args: [command] });
     res.json({ workflowId: target.workflowId, action: command.action, parked });
+  });
+
+  // --- Agent inbox --------------------------------------------------------------------------------
+
+  app.get('/agent', (_req, res) => {
+    res.type('html').send(agentPage);
+  });
+
+  /**
+   * Open agent forms. Read from the running signing workflows (list + query), so the API does not
+   * need the worker's database. At scale you'd use a custom search attribute instead of querying
+   * every running workflow.
+   */
+  app.get('/agent/tasks', async (_req, res) => {
+    const tasks: (AgentForm & { workflowId: string })[] = [];
+    const running = client.workflow.list({ query: "WorkflowType = 'contractSigning' AND ExecutionStatus = 'Running'" });
+    for await (const execution of running) {
+      const state = await client.workflow.getHandle(execution.workflowId).query(getSigningStateQuery);
+      if (state.agentForm && state.stage === 'AWAITING_AGENT') tasks.push({ workflowId: execution.workflowId, ...state.agentForm });
+    }
+    tasks.sort((a, b) => a.openedAt.localeCompare(b.openedAt));
+    res.json(tasks);
+  });
+
+  /**
+   * Submit the agent form. Body: { iban, accountHolder }.
+   *   200 { accepted: true, mandate }                   verified, the workflow continues
+   *   200 { accepted: false, reason, ... }              failed verification, the form is reopened
+   *   422 { accepted: false, reason }                   rejected by the validator (malformed input)
+   */
+  app.post('/agent/tasks/:workflowId/payment-details', async (req, res) => {
+    const { iban, accountHolder } = (req.body ?? {}) as { iban?: string; accountHolder?: string };
+    try {
+      const result = await client.workflow
+        .getHandle(req.params.workflowId)
+        .executeUpdate(submitPaymentDetailsUpdate, { args: [{ iban: iban ?? '', accountHolder: accountHolder ?? '' }] });
+      res.json(result);
+    } catch (err) {
+      if (!(err instanceof WorkflowUpdateFailedError)) throw err;
+      res.status(422).json({ accepted: false, reason: err.cause?.message ?? err.message });
+    }
   });
 
   const onError: ErrorRequestHandler = (err, _req, res, _next) => {

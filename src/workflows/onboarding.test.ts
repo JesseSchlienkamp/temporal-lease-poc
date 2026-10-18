@@ -14,7 +14,8 @@ import { after, before, describe, it } from 'node:test';
 import type * as activities from '../activities';
 import { signingWorkflowId } from '../shared/ids';
 import type { LeadInput, OnboardingStatus } from '../shared/types';
-import { contractSignedSignal } from './contract-signing';
+import type { SigningState } from './contract-signing';
+import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from './contract-signing';
 import { carLeaseOnboarding, getStateQuery, quoteDecisionSignal } from './onboarding';
 import { operatorActionUpdate } from './operator-recovery';
 
@@ -27,6 +28,7 @@ const lead: LeadInput = {
   dateOfBirth: '1988-05-17',
   annualIncome: 62_000,
   vehicleModel: 'Volvo EX30',
+  iban: 'NL91ABNA0417164300',
 };
 
 const unavailable = () => ApplicationFailure.retryable('HTTP 503 (mocked)', 'ExternalServiceUnavailable');
@@ -51,6 +53,10 @@ function mockActivities(overrides: Partial<Activities> = {}) {
     expireContract: async () => {},
     activateLease: async () => {},
     sendEmail: async () => {},
+    verifyBankAccount: async () => ({ result: 'MATCH', registeredName: 'J. Jansen' }),
+    savePaymentMandate: async (_id, details) => ({ mandateReference: 'MANDATE-1', ...details }),
+    openAgentTask: async () => {},
+    completeAgentTask: async () => {},
   };
   const merged = { ...happy, ...overrides };
   const tracked = Object.fromEntries(
@@ -104,6 +110,21 @@ describe('carLeaseOnboarding', () => {
     throw new Error(`Signing child of ${leadId} never started`);
   }
 
+  /** Polls the signing child's state until `predicate` holds (the child may not exist yet). */
+  async function waitForSigning(leadId: string, predicate: (state: SigningState) => boolean): Promise<SigningState> {
+    const child = env.client.workflow.getHandle(signingWorkflowId(leadId));
+    for (let i = 0; i < 100; i++) {
+      try {
+        const state = await child.query(getSigningStateQuery);
+        if (predicate(state)) return state;
+      } catch (err) {
+        if (!(err instanceof WorkflowNotFoundError)) throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Signing child of ${leadId} never reached the expected state`);
+  }
+
   it('retries a flaky credit bureau and still reaches ACTIVE', async () => {
     let failuresLeft = 2;
     const mock = mockActivities({
@@ -127,6 +148,8 @@ describe('carLeaseOnboarding', () => {
 
     assert.equal(result.status, 'ACTIVE');
     assert.equal(result.signingWorkflowId, `lead-flaky-${n}-signing`);
+    assert.equal(result.mandate?.iban, lead.iban);
+    assert.equal(mock.callsTo('openAgentTask').length, 0); // valid IBAN in the application: no agent needed
     assert.equal(mock.callsTo('activateLease').length, 1);
     assert.deepEqual(
       mock.callsTo('runCreditCheck').map((c) => c.attempt),
@@ -252,5 +275,87 @@ describe('carLeaseOnboarding', () => {
     assert.equal(mock.callsTo('expireContract').length, 1);
     assert.equal(mock.callsTo('releaseVehicle').length, 1);
     assert.equal(mock.callsTo('activateLease').length, 0);
+  });
+
+  it('opens an agent form when the IBAN is missing, and reopens it until a valid one is submitted', async () => {
+    const mock = mockActivities({
+      verifyBankAccount: async (_id, details) =>
+        details.iban === 'NL20INGB0001234567'
+          ? { result: 'NO_MATCH', registeredName: 'P. de Vries' }
+          : { result: 'MATCH', registeredName: 'J. Jansen' },
+    });
+    const submit = (leadId: string, iban: string, accountHolder: string) =>
+      env.client.workflow
+        .getHandle(signingWorkflowId(leadId))
+        .executeUpdate(submitPaymentDetailsUpdate, { args: [{ iban, accountHolder }] });
+
+    const result = await run(mock.activities, async (taskQueue) => {
+      const handle = await env.client.workflow.start(carLeaseOnboarding, {
+        taskQueue,
+        workflowId: `lead-agent-${n}`,
+        args: [{ ...lead, iban: undefined }],
+      });
+      await handle.signal(quoteDecisionSignal, { accepted: true });
+      const leadId = handle.workflowId;
+
+      const opened = await waitForSigning(leadId, (s) => s.stage === 'AWAITING_AGENT');
+      assert.equal(opened.agentForm?.reason, 'No IBAN in the application');
+      assert.equal(opened.agentForm?.prefill.accountHolder, 'Jan Jansen');
+
+      // 1. Typo in the IBAN: rejected by the update validator, never reaches the workflow
+      await assert.rejects(submit(leadId, 'NL00ABNA0417164300', 'Jan Jansen'), WorkflowUpdateFailedError);
+
+      // 2. Account in someone else's name: rejected by the workflow's policy check, form reopened
+      const otherHolder = await submit(leadId, 'NL20INGB0001234567', 'P. de Vries');
+      assert.equal(otherHolder.accepted, false);
+      assert.match(otherHolder.accepted ? '' : otherHolder.reason, /customer's name/);
+
+      // 3. Bank says the IBAN belongs to someone else: rejected, form reopened again
+      const noMatch = await submit(leadId, 'NL20INGB0001234567', 'Jan Jansen');
+      assert.deepEqual(noMatch, {
+        accepted: false,
+        reason: 'Bank: NL20 INGB 0001 2345 67 is registered to "P. de Vries", not "Jan Jansen"',
+        rejectedSubmissions: 2,
+      });
+      const reopened = await waitForSigning(leadId, (s) => s.stage === 'AWAITING_AGENT');
+      assert.equal(reopened.agentForm?.rejectedSubmissions, 2);
+
+      // 4. Correct IBAN (any formatting): accepted, the workflow continues
+      const accepted = await submit(leadId, 'nl91 abna 0417 1643 00', 'Jan Jansen');
+      assert.equal(accepted.accepted, true);
+      assert.equal(accepted.accepted && accepted.mandate.iban, 'NL91ABNA0417164300');
+
+      await waitForSigning(leadId, (s) => s.stage === 'AWAITING_SIGNATURE');
+      await signWhenChildStarts(leadId);
+      return handle.result();
+    });
+
+    assert.equal(result.status, 'ACTIVE');
+    assert.equal(result.mandate?.iban, 'NL91ABNA0417164300');
+    assert.equal(mock.callsTo('openAgentTask').length, 3); // opened + reopened twice
+    assert.equal(mock.callsTo('verifyBankAccount').length, 2); // the policy rejection never calls the bank
+    assert.equal(mock.callsTo('completeAgentTask').length, 1);
+    assert.equal(mock.callsTo('requestSignature').length, 1); // only after a valid IBAN
+  });
+
+  it('opens the agent form when the IBAN from the application fails verification', async () => {
+    const mock = mockActivities({
+      verifyBankAccount: async () => ({ result: 'ACCOUNT_CLOSED', registeredName: 'J. Jansen' }),
+    });
+
+    await run(mock.activities, async (taskQueue) => {
+      const handle = await env.client.workflow.start(carLeaseOnboarding, {
+        taskQueue,
+        workflowId: `lead-closed-${n}`,
+        args: [{ ...lead, iban: 'NL44RABO0123456789' }],
+      });
+      await handle.signal(quoteDecisionSignal, { accepted: true });
+
+      const opened = await waitForSigning(handle.workflowId, (s) => s.stage === 'AWAITING_AGENT');
+      assert.equal(opened.agentForm?.reason, 'IBAN from the application was rejected. Bank: NL44 RABO 0123 4567 89 is closed');
+      assert.equal(opened.agentForm?.prefill.iban, 'NL44RABO0123456789');
+      await handle.terminate('test done');
+    });
+    assert.equal(mock.callsTo('requestSignature').length, 0);
   });
 });

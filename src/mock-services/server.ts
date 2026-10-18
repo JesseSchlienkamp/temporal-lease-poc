@@ -1,6 +1,8 @@
 import express, { type RequestHandler } from 'express';
 import { createHash, randomUUID } from 'node:crypto';
 import { config } from '../config';
+import { normalizeIban } from '../shared/iban';
+import { namesMatch } from '../shared/names';
 
 /**
  * Stand-ins for the external systems the onboarding depends on, with configurable failures so
@@ -14,7 +16,7 @@ import { config } from '../config';
  * Inspect / change at runtime:  GET /admin/chaos   POST /admin/chaos   POST /admin/chaos/reset
  */
 
-type ServiceName = 'creditBureau' | 'inventory' | 'esign' | 'notifications';
+type ServiceName = 'creditBureau' | 'inventory' | 'esign' | 'notifications' | 'bank';
 interface Chaos {
   failFirstN: number;
   failureRate: number;
@@ -27,6 +29,7 @@ const DEFAULT_CHAOS: Record<ServiceName, Chaos> = {
   inventory: { failFirstN: 0, failureRate: 0.3, latencyMs: 800, errorStatus: 500 },
   esign: { failFirstN: 1, failureRate: 0, latencyMs: 200, errorStatus: 502 },
   notifications: { failFirstN: 0, failureRate: 0.2, latencyMs: 100, errorStatus: 503 },
+  bank: { failFirstN: 0, failureRate: 0, latencyMs: 300, errorStatus: 503 },
 };
 
 const chaos: Record<ServiceName, Chaos> = structuredClone(DEFAULT_CHAOS);
@@ -73,6 +76,14 @@ const VEHICLES: Record<string, number> = {
   'Volkswagen ID.4': 44_990,
   'BMW i4': 59_900,
   'Skoda Enyaq': 46_490,
+};
+
+// The bank's records for the IBAN-name check. Any other valid IBAN is NOT_FOUND.
+const BANK_ACCOUNTS: Record<string, { holder: string; closed?: boolean }> = {
+  NL91ABNA0417164300: { holder: 'J. Jansen' },
+  NL20INGB0001234567: { holder: 'P. de Vries' },
+  NL44RABO0123456789: { holder: 'J. Jansen', closed: true },
+  NL51ABNA0987654321: { holder: 'P. Bakker' },
 };
 
 const reservations = new Map<string, { reservationId: string; vin: string; vehicleModel: string; listPrice: number }>();
@@ -127,6 +138,17 @@ app.post('/esign/envelopes', withChaos('esign'), (req, res) => {
   const { contractId } = req.body as { contractId: string };
   const envelopeId = `ENV-${hashInt(contractId, 1_000_000)}`;
   res.status(201).json({ envelopeId, signingUrl: `https://esign.example.com/sign/${envelopeId}` });
+});
+
+app.post('/bank/account-check', withChaos('bank'), (req, res) => {
+  const { iban, accountHolder } = req.body as { iban: string; accountHolder: string };
+  const account = BANK_ACCOUNTS[normalizeIban(iban)];
+  if (!account) {
+    res.json({ result: 'NOT_FOUND' });
+    return;
+  }
+  const result = account.closed ? 'ACCOUNT_CLOSED' : namesMatch(account.holder, accountHolder) ? 'MATCH' : 'NO_MATCH';
+  res.json({ result, registeredName: account.holder });
 });
 
 app.post('/notifications/email', withChaos('notifications'), (req, res) => {

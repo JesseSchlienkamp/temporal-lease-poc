@@ -127,17 +127,28 @@ export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOpt
       return state;
     }
 
-    // 7. Contract + e-signature in a child workflow (see contract-signing.ts)
+    // 7. Contract, payment details (agent form if the IBAN is missing or wrong) and e-signature
+    //    in a child workflow (see contract-signing.ts)
     const signing = await startChild(contractSigning, {
       workflowId: signingWorkflowId(leadId),
-      args: [{ leadId, quote, signerEmail: lead.email, signatureTimeout: options.signatureTimeout }],
+      args: [
+        {
+          leadId,
+          quote,
+          signerEmail: lead.email,
+          customerName: `${lead.firstName} ${lead.lastName}`,
+          iban: lead.iban,
+          signatureTimeout: options.signatureTimeout,
+        },
+      ],
     });
     state.signingWorkflowId = signing.workflowId;
-    await setStatus('AWAITING_SIGNATURE', `Signing workflow ${signing.workflowId}`);
+    await setStatus('CONTRACTING', `Signing workflow ${signing.workflowId}`);
 
     // 8. Wait for the child. If the child is reset, this follows its new run.
     const signed = await signing.result();
     state.contract = signed.contract;
+    state.mandate = signed.mandate;
     if (signed.outcome === 'EXPIRED') {
       await compensate();
       await setStatus('SIGNATURE_EXPIRED');

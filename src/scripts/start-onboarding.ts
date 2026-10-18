@@ -3,6 +3,12 @@
  *
  *   npm run lead                                  # start, then accept + sign by hand via the API
  *   npm run lead -- --auto                        # also accept the quote and sign automatically
+ *
+ * Scenarios (combine with --auto):
+ *   --scenario happy        (default) valid IBAN in the application, runs straight through
+ *   --scenario agent-form   no IBAN: the signing child opens a form at http://localhost:3000/agent
+ *   --iban <value>          use this IBAN instead, e.g. NL20INGB0001234567 (someone else's -> form)
+ *
  *   npm run lead -- --auto --decline              # customer declines -> reservation is released
  *   npm run lead -- --model "Fiat Multipla"       # unknown model -> non-retryable failure
  *   npm run lead -- --email jan+reject@example.com  # low credit score -> CREDIT_REJECTED
@@ -14,7 +20,20 @@ import { config } from '../config';
 import { signingWorkflowId } from '../shared/ids';
 import type { LeadInput, OnboardingStatus } from '../shared/types';
 import { connectClient } from '../temporal-connection';
-import { carLeaseOnboarding, contractSignedSignal, getStateQuery, quoteDecisionSignal } from '../workflows';
+import {
+  carLeaseOnboarding,
+  contractSignedSignal,
+  getSigningStateQuery,
+  getStateQuery,
+  quoteDecisionSignal,
+  type SigningStage,
+} from '../workflows';
+
+const SCENARIOS = {
+  happy: { iban: 'NL91ABNA0417164300' },
+  'agent-form': { iban: undefined },
+} as const;
+type Scenario = keyof typeof SCENARIOS;
 
 const { values: args } = parseArgs({
   options: {
@@ -26,8 +45,16 @@ const { values: args } = parseArgs({
     model: { type: 'string', default: 'Volvo EX30' },
     auto: { type: 'boolean', default: false },
     decline: { type: 'boolean', default: false },
+    scenario: { type: 'string', default: 'happy' },
+    iban: { type: 'string' },
   },
 });
+
+if (!(args.scenario in SCENARIOS)) {
+  console.error(`Unknown scenario "${args.scenario}". Known: ${Object.keys(SCENARIOS).join(', ')}`);
+  process.exit(1);
+}
+const scenario = SCENARIOS[args.scenario as Scenario];
 
 async function main() {
   const client = new Client({ connection: await connectClient(), namespace: config.temporal.namespace });
@@ -39,6 +66,7 @@ async function main() {
     dateOfBirth: args.dob,
     annualIncome: Number(args.income),
     vehicleModel: args.model,
+    iban: args.iban ?? scenario.iban,
   };
   const leadId = `lead-${randomUUID().slice(0, 8)}`;
   const handle = await client.workflow.start(carLeaseOnboarding, {
@@ -46,6 +74,7 @@ async function main() {
     workflowId: leadId,
     args: [lead, { quoteDecisionTimeout: '10 minutes', signatureTimeout: '10 minutes' }],
   });
+  console.log(`Scenario ${args.scenario}${lead.iban ? `, IBAN ${lead.iban}` : ', no IBAN'}`);
   console.log(`Started ${leadId}  ->  http://localhost:8233/namespaces/${config.temporal.namespace}/workflows/${leadId}`);
 
   if (!args.auto) {
@@ -57,22 +86,30 @@ async function main() {
   }
 
   // Auto mode: play the customer.
-  let last: OnboardingStatus | undefined;
-  const signalled = new Set<OnboardingStatus>();
+  let last: string | undefined;
+  const signalled = new Set<OnboardingStatus | SigningStage>();
+  const child = client.workflow.getHandle(signingWorkflowId(leadId));
   for (;;) {
     const { status } = await handle.describe();
     if (status.name !== 'RUNNING') break;
 
     const state = await handle.query(getStateQuery);
-    if (state.status !== last) console.log(`  status: ${(last = state.status)}`);
+    const signing = state.signingWorkflowId ? await child.query(getSigningStateQuery) : undefined;
+    const current = signing ? `${state.status} / signing: ${signing.stage}` : state.status;
+    if (current !== last) {
+      console.log(`  status: ${(last = current)}`);
+      if (signing?.stage === 'AWAITING_AGENT') {
+        console.log(`    ↳ ${signing.agentForm?.reason}. Waiting for an agent: http://localhost:${config.apiPort}/agent`);
+      }
+    }
 
     if (state.status === 'QUOTE_SENT' && !signalled.has('QUOTE_SENT')) {
       signalled.add('QUOTE_SENT');
       await handle.signal(quoteDecisionSignal, { accepted: !args.decline, reason: args.decline ? 'Too expensive' : undefined });
     }
-    if (state.status === 'AWAITING_SIGNATURE' && !signalled.has('AWAITING_SIGNATURE')) {
+    if (signing?.stage === 'AWAITING_SIGNATURE' && !signalled.has('AWAITING_SIGNATURE')) {
       signalled.add('AWAITING_SIGNATURE');
-      await client.workflow.getHandle(signingWorkflowId(leadId)).signal(contractSignedSignal, {
+      await child.signal(contractSignedSignal, {
         signedAt: new Date().toISOString(),
         signerName: `${lead.firstName} ${lead.lastName}`,
       });

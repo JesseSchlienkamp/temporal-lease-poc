@@ -15,36 +15,81 @@ flowchart LR
   D --> E[Quote + email 🔁]
   E -->|declined / expired| X3[release vehicle ↩]
   subgraph child["child workflow: contractSigning (&lt;leadId&gt;-signing)"]
-    F[Contract + e-sign 🔁] --> F2[Wait for signature ≤ 14 days]
+    F[Contract] --> P{IBAN present<br/>and verified? 🔁}
+    P -->|no| AG[Agent form 👤]
+    AG -->|submit| P
+    P -->|yes| F1[Mandate + e-sign 🔁] --> F2[Wait for signature ≤ 14 days]
   end
   E -->|signal: quoteDecision<br/>wait ≤ 7 days| F
   F2 -->|signal: contractSigned| G[ACTIVE + welcome email 🔁]
   F2 -->|expired| X4[release vehicle ↩]
 ```
 
-🔁 = calls a flaky external service and is retried by Temporal. ↩ = compensation (saga).
+🔁 = calls a flaky external service and is retried by Temporal. ↩ = compensation (saga). 👤 = waits for a human agent.
 
 Contract signing runs as a **child workflow** with a fixed ID (`<leadId>-signing`). It has its own
 lifecycle (up to 14 days), and you can reset it on its own: the parent keeps waiting and picks up
 the result of the child's new run. The credit check and vehicle reservation don't run again.
+
+### Agent form: missing or wrong IBAN
+
+The contract needs a SEPA direct-debit mandate, so the child needs a verified IBAN before it
+sends anything for signature. `iban` is optional in the application. When it's missing, or when it
+fails verification, the child opens a form in the **agent inbox** at
+http://localhost:3000/agent and waits for an agent, without a timeout.
+
+A submitted value goes through three checks. Any failure sends the agent back to the form with the
+reason:
+
+| Check                         | Where                     | On failure                                           |
+|-------------------------------|---------------------------|------------------------------------------------------|
+| Format and mod-97 checksum    | update validator          | HTTP 422; nothing reaches the workflow history       |
+| Account in the customer's name | workflow                 | form reopened, `rejectedSubmissions + 1`             |
+| Bank IBAN-name check (mock)   | `verifyBankAccount` 🔁    | form reopened (no match, closed, not found)          |
+
+The submit is a workflow update (`submitPaymentDetails`). Its handler waits for the workflow's
+verdict, so the agent sees "accepted" or the reason for rejection in the same request. Open forms
+are also recorded in the `agent_tasks` table, and the verified IBAN in `payment_mandates`.
+
+Demo IBANs known to the mock bank (they're also listed on the agent page):
+
+| IBAN                     | Bank record                     |
+|--------------------------|---------------------------------|
+| `NL91 ABNA 0417 1643 00` | J. Jansen: matches the demo customer |
+| `NL20 INGB 0001 2345 67` | P. de Vries                     |
+| `NL44 RABO 0123 4567 89` | J. Jansen, account closed       |
+| `NL51 ABNA 0987 6543 21` | P. Bakker                       |
+| `NL00 ABNA 0417 1643 00` | invalid checksum                |
+
+Any other well-formed IBAN is "not found".
 
 ## Layout
 
 ```
 src/
   workflows/onboarding.ts       parent workflow: steps, signals, query, compensation
-  workflows/contract-signing.ts child workflow: contract, e-signature, wait for signature
+  workflows/contract-signing.ts child workflow: contract, IBAN / agent form, e-signature, wait for signature
   workflows/activity-proxies.ts retry policies and timeouts for local and external activities
   workflows/onboarding.test.ts  tests with mocked activities (time-skipping test server)
   activities/                   one file per domain; each writes to SQLite + audit trail
   activities/support.ts         HTTP helper: 5xx/408/429/network → retryable, other 4xx → non-retryable
   db/database.ts                SQLite schema (leads, credit_checks, vehicle_reservations, quotes, contracts, workflow_events)
   mock-services/server.ts       fake credit bureau / inventory / e-sign / email with chaos controls
-  api/server.ts                 HTTP API: start onboarding, signal, query
+  api/server.ts                 HTTP API: start onboarding, signal, query, agent inbox
+  api/agent-page.ts             agent inbox page (GET /agent)
+  shared/iban.ts                IBAN format + mod-97 checksum (also runs in the workflow sandbox)
   worker.ts                     Temporal worker
   scripts/                      CLI demo driver, DB viewer, workflow reset
 infra/                          Bicep + deploy script for Azure Container Apps
 Dockerfile, docker-compose.yml
+```
+
+## Scenarios
+
+```bash
+npm run lead -- --auto --scenario happy        # valid IBAN in the application: runs straight through to ACTIVE
+npm run lead -- --auto --scenario agent-form   # no IBAN: open http://localhost:3000/agent and fill in the form
+npm run lead -- --auto --iban NL20INGB0001234567   # IBAN that fails verification: the form opens with the reason
 ```
 
 ## Run locally
@@ -69,6 +114,7 @@ Or run everything in containers with `docker compose up --build`.
 curl -X POST localhost:3000/leads -H 'content-type: application/json' -d '{
   "firstName": "Jan", "lastName": "Jansen", "email": "jan@example.com",
   "dateOfBirth": "1988-05-17", "annualIncome": 62000, "vehicleModel": "Volvo EX30",
+  "iban": "NL91ABNA0417164300",
   "options": { "quoteDecisionTimeout": "5 minutes" }
 }'
 # → { "leadId": "lead-1a2b3c4d" }
@@ -82,6 +128,15 @@ curl -X POST localhost:3000/leads/lead-1a2b3c4d/operator \
 ```
 
 `GET /leads/:id` also returns the signing child's state (`signing.stage`) once the child has started.
+
+Agent endpoints (used by the page at `/agent`):
+
+```bash
+curl localhost:3000/agent/tasks                                            # open forms
+curl -X POST localhost:3000/agent/tasks/lead-1a2b3c4d-signing/payment-details \
+     -H 'content-type: application/json' \
+     -d '{"iban": "NL91ABNA0417164300", "accountHolder": "Jan Jansen"}'
+```
 
 Vehicle models: `Volvo EX30`, `Tesla Model 3`, `Kia EV6`, `Volkswagen ID.4`, `BMW i4`, `Skoda Enyaq`.
 
@@ -132,7 +187,7 @@ Scenarios worth showing:
 7. **Business rejection (not an error)**: `npm run lead -- --auto --email jan+reject@example.com` ends in `CREDIT_REJECTED`.
 8. **Compensation**: `npm run lead -- --auto --decline`. The reserved vehicle is released (see `vehicle_reservations`).
 9. **Reset only the child**: start a lead with `npm run lead`, accept the quote, and wait for
-   `AWAITING_SIGNATURE`. Then run `npm run reset -- <leadId>-signing`. The child's old run is
+   `signing.stage` to be `AWAITING_SIGNATURE`. Then run `npm run reset -- <leadId>-signing`. The child's old run is
    terminated and a new run creates the contract and sends the e-sign envelope again (both are
    idempotent). The parent keeps waiting. `POST /leads/<leadId>/sign` then completes the lease.
    In `workflow_events`, only `createContract`, `requestSignature` and `sendEmail:contract-ready`
@@ -155,8 +210,9 @@ npm test
 tests check that a flaky service is retried until it succeeds (attempts `[1, 2, 3]`), that a
 service that stays down is called `maximumAttempts` times and then parked until an operator sends
 `retry`, that an operator `abort` fails the lead and releases the vehicle, that a non-retryable
-error is called once, that the 7-day quote timeout releases the vehicle, and that an expired signature in
-the child workflow leads to compensation in the parent. The time-skipping server
+error is called once, that the 7-day quote timeout releases the vehicle, that an expired signature in
+the child workflow leads to compensation in the parent, and that the agent form keeps reopening
+until a valid IBAN is submitted. The time-skipping server
 makes the backoffs and timers pass instantly.
 
 ## Deploy to Azure Container Apps

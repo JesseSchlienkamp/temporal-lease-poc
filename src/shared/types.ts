@@ -15,6 +15,12 @@ export interface LeadInput {
   termMonths?: number;
   annualKm?: number;
   downPayment?: number;
+  /**
+   * Bank account for the SEPA direct-debit mandate. Optional at application time, but required
+   * before the contract can be sent for signature: when it is missing or fails verification, the
+   * signing workflow opens a form for an agent.
+   */
+  iban?: string;
 }
 
 export interface OnboardingOptions {
@@ -34,6 +40,8 @@ export type OnboardingStatus =
   | 'QUOTE_SENT'
   | 'QUOTE_DECLINED'
   | 'QUOTE_EXPIRED'
+  | 'CONTRACTING'
+  | 'AWAITING_AGENT'
   | 'AWAITING_SIGNATURE'
   | 'SIGNATURE_EXPIRED'
   | 'ACTIVE'
@@ -92,6 +100,26 @@ export interface OnboardingState {
   contract?: Contract;
   /** Set while a step has exhausted its retries and waits for an operator. */
   needsAttention?: { step: string; error: string; since: string };
+  /** Direct-debit mandate, once the signing child has verified the IBAN. */
+  mandate?: PaymentMandate;
   /** Id of the contract-signing child workflow, once started. */
   signingWorkflowId?: string;
+}
+
+/** What an agent (or the customer's application) supplies for the direct-debit mandate. */
+export interface PaymentDetails {
+  iban: string;
+  accountHolder: string;
+}
+
+/** Result of the bank's IBAN-name check. */
+export interface BankAccountCheck {
+  result: 'MATCH' | 'NO_MATCH' | 'ACCOUNT_CLOSED' | 'NOT_FOUND';
+  registeredName?: string;
+}
+
+export interface PaymentMandate {
+  mandateReference: string;
+  iban: string;
+  accountHolder: string;
 }
