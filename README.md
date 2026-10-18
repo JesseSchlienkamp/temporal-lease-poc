@@ -68,41 +68,47 @@ Any other well-formed IBAN is "not found".
 
 ## Layout
 
-Each workflow has its own folder with its activities next to it. Child workflows live under their
-parent's `childWorkflows/` folder. Types sit in `types.ts`, and signals, queries and updates in
-`messages.ts`, so clients can import them without loading workflow code.
+Each workflow has its own folder, named after the workflow, with its activities next to it.
+Child workflows live under their parent's `childWorkflows/` folder.
+- **Files:** a workflow file is called `<function>.workflow.ts` and declares its activity proxies
+  above the function. Every activity has its own `<function>.activity.ts`.
+- **Folders:** every activity sits in a domain folder (`lead/`, `vehicle/`, `payment/`, …).
+- **Types and messages:** types live in `types.ts`, and signals, queries and updates in
+  `messages.ts`, so clients can import them without loading workflow code.
 
 ```
-src/
-  workflows/
-    index.ts                        workflow registry (worker's workflowsPath): workflow functions only
-    activities.ts                   activity registry: merges every activities/ folder
-    common/                         shared by all workflows
-      activity-options.ts           retry policies and timeouts (local, external, e-sign)
-      activity-support.ts           tracked() audit rows, callExternal(): 5xx/408/429 retryable, other 4xx not
-      operator-recovery.ts          recovery.guard: park a step that ran out of retries
-      messages.ts, types.ts         operatorAction update, OperatorCommand, ParkedStep
-    carLeaseOnboarding/
-      workflow.ts                   lead → credit → vehicle → quote → [child] → active lease
-      messages.ts, types.ts         quoteDecision signal, getState query; LeadInput, OnboardingState, …
-      activity-proxies.ts           proxies for this workflow's activities
-      activities/                   lead, credit, vehicle, quote, lease, notification
-      workflow.test.ts              tests with mocked activities (time-skipping test server)
-      childWorkflows/
-        contractSigning/
-          workflow.ts               contract → IBAN (agent form if needed) → e-sign → signature
-          messages.ts, types.ts     contractSigned, getSigningState, submitPaymentDetails; SigningState, …
-          activity-proxies.ts       own activities + updateLeadStatus / sendEmail from the parent
-          activities/               contract, payment, agentTask
-  shared/                           pure helpers, also used in the workflow sandbox: iban, names, ids
-  db/database.ts                    SQLite schema (leads, credit_checks, vehicle_reservations, quotes, contracts, …)
-  mock-services/                    fake credit bureau / inventory / e-sign / email / bank with chaos controls
-  api/                              HTTP API (start, signal, query, operator, agent inbox) + agent page
-  demo/                             interactive demo CLI (npm run demo)
-  scripts/                          CLI lead driver, DB viewer, workflow reset, chaos switch
-  worker.ts                         Temporal worker
-infra/                              Bicep + deploy script for Azure Container Apps
-Dockerfile, docker-compose.yml
+src/workflows/
+  index.ts                                   workflow registry (worker's workflowsPath)
+  activities.ts                              activity registry: merges every activities/ index
+  common/                                    activity-options, activity-support, operator-recovery, messages, types
+  carLeaseOnboarding/
+    carLeaseOnboarding.workflow.ts           lead → credit → vehicle → quote → [child] → active lease
+    carLeaseOnboarding.workflow.test.ts      tests with mocked activities (time-skipping test server)
+    messages.ts  types.ts
+    activities/
+      index.ts                               named exports: every export is registered as an activity
+      lead/        saveLead · updateLeadStatus · qualifyLead          (.activity.ts)
+      vehicle/     reserveVehicle · releaseVehicle
+      quote/       createQuote · updateQuoteStatus
+      credit/      runCreditCheck
+      lease/       activateLease
+      notification/ sendEmail
+    childWorkflows/
+      contractSigning/
+        contractSigning.workflow.ts          contract → IBAN (agent form if needed) → e-sign → signature
+        messages.ts  types.ts
+        activities/
+          contract/    createContract · requestSignature · expireContract
+          payment/     verifyBankAccount · findPaymentMandate · savePaymentMandate
+          agentTask/   openAgentTask · completeAgentTask  (+ agentTaskId.ts helper)
+src/shared/        pure helpers, also used in the workflow sandbox: iban, names, ids
+src/db/            SQLite schema
+src/mock-services/ fake credit bureau / inventory / e-sign / email / bank with chaos controls
+src/api/           HTTP API + agent page
+src/demo/          interactive demo CLI (npm run demo)
+src/scripts/       CLI lead driver, DB viewer, workflow reset, chaos switch
+src/worker.ts      Temporal worker
+infra/             Bicep + deploy script for Azure Container Apps
 ```
 
 ## Demo CLI
@@ -291,7 +297,7 @@ still fail the workflow immediately, because retrying the same input won't help.
 npm test
 ```
 
-`src/workflows/carLeaseOnboarding/workflow.test.ts` replaces the activities with mocks that throw on purpose. The
+`src/workflows/carLeaseOnboarding/carLeaseOnboarding.workflow.test.ts` replaces the activities with mocks that throw on purpose. The
 tests check that a flaky service is retried until it succeeds (attempts `[1, 2, 3]`), that a
 service that stays down is called `maximumAttempts` times and then parked until an operator sends
 `retry`, that an operator `abort` fails the lead and releases the vehicle, that a non-retryable

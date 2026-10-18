@@ -1,5 +1,5 @@
-import { getDb } from '../../../db/database';
-import { tracked } from '../../common/activity-support';
+import { getDb } from '../../../../db/database';
+import { tracked } from '../../../common/activity-support';
 
 /** Marks the signed contract, the quote and the vehicle reservation as final. */
 export async function activateLease(leadId: string, contractId: string, signedAt: string): Promise<void> {

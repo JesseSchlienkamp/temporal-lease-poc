@@ -4,16 +4,21 @@ import {
   condition,
   isCancellation,
   log,
+  proxyActivities,
   setHandler,
   startChild,
   workflowInfo,
 } from '@temporalio/workflow';
 import { signingWorkflowId } from '../../shared/ids';
+import { EXTERNAL_ACTIVITY, LOCAL_ACTIVITY } from '../common/activity-options';
 import { createOperatorRecovery, rootCauseMessage } from '../common/operator-recovery';
-import { external, local } from './activity-proxies';
-import { contractSigning } from './childWorkflows/contractSigning/workflow';
+import type * as activities from './activities';
+import { contractSigning } from './childWorkflows/contractSigning/contractSigning.workflow';
 import { getStateQuery, quoteDecisionSignal } from './messages';
 import type { LeadInput, OnboardingOptions, OnboardingState, OnboardingStatus, QuoteDecision } from './types';
+
+const local = proxyActivities<typeof activities>(LOCAL_ACTIVITY);
+const external = proxyActivities<typeof activities>(EXTERNAL_ACTIVITY);
 
 /**
  * Lead -> qualification -> credit check -> vehicle reservation -> quote -> (customer accepts)

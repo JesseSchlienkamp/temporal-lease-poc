@@ -1,6 +1,6 @@
-import { getDb } from '../../../db/database';
-import type { CreditCheckResult, LeadInput, Quote, VehicleReservation } from '../types';
-import { tracked } from '../../common/activity-support';
+import { getDb } from '../../../../db/database';
+import type { CreditCheckResult, LeadInput, Quote, VehicleReservation } from '../../types';
+import { tracked } from '../../../common/activity-support';
 
 export async function createQuote(
   leadId: string,
@@ -31,10 +31,6 @@ export async function createQuote(
 
     return quote;
   });
-}
-
-export async function updateQuoteStatus(quoteId: string, status: 'ACCEPTED' | 'DECLINED' | 'EXPIRED'): Promise<void> {
-  getDb().prepare('UPDATE quotes SET status = ? WHERE id = ?').run(status, quoteId);
 }
 
 /** Simplified operational-lease formula: depreciation + finance charge. */

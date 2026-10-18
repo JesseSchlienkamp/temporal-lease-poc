@@ -3,7 +3,7 @@ import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { ParkedStep } from '../workflows/common/types';
 import type { SigningState } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
 import type { OnboardingState } from '../workflows/carLeaseOnboarding/types';
-import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/workflow';
+import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
 import type { Waiter } from './runtime';
 
 export interface DemoContext {

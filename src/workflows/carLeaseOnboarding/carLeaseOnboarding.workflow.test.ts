@@ -18,7 +18,7 @@ import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate 
 import type { PaymentMandate, SigningState } from './childWorkflows/contractSigning/types';
 import { getStateQuery, quoteDecisionSignal } from './messages';
 import type { LeadInput, OnboardingStatus } from './types';
-import { carLeaseOnboarding } from './workflow';
+import { carLeaseOnboarding } from './carLeaseOnboarding.workflow';
 
 type Activities = typeof activities;
 

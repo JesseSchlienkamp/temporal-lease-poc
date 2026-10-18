@@ -1,9 +1,11 @@
-import { allHandlersFinished, condition, setHandler, workflowInfo } from '@temporalio/workflow';
+import { allHandlersFinished, condition, proxyActivities, setHandler, workflowInfo } from '@temporalio/workflow';
 import { formatIban, ibanError, normalizeIban } from '../../../../shared/iban';
 import { namesMatch } from '../../../../shared/names';
+import { ESIGN_ACTIVITY, EXTERNAL_ACTIVITY, LOCAL_ACTIVITY } from '../../../common/activity-options';
 import { createOperatorRecovery } from '../../../common/operator-recovery';
+import type * as parentActivities from '../../activities';
 import type { OnboardingStatus } from '../../types';
-import { esign, external, local } from './activity-proxies';
+import type * as activities from './activities';
 import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from './messages';
 import type {
   ContractSigned,
@@ -15,6 +17,13 @@ import type {
   SigningState,
   SubmitPaymentDetailsResult,
 } from './types';
+
+/** This child's own activities, plus the two it shares with the parent workflow. */
+type Activities = typeof activities & Pick<typeof parentActivities, 'updateLeadStatus' | 'sendEmail'>;
+
+const local = proxyActivities<Activities>(LOCAL_ACTIVITY);
+const external = proxyActivities<Activities>(EXTERNAL_ACTIVITY);
+const esign = proxyActivities<Activities>(ESIGN_ACTIVITY);
 
 /**
  * Child workflow: contract -> payment details (agent form if needed) -> e-signature -> signature.
