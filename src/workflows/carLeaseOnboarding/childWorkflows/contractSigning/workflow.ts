@@ -1,86 +1,20 @@
-import {
-  allHandlersFinished,
-  condition,
-  defineQuery,
-  defineSignal,
-  defineUpdate,
-  setHandler,
-  workflowInfo,
-} from '@temporalio/workflow';
-import type { Duration } from '@temporalio/common';
-import { formatIban, ibanError, normalizeIban } from '../shared/iban';
-import { namesMatch } from '../shared/names';
+import { allHandlersFinished, condition, setHandler, workflowInfo } from '@temporalio/workflow';
+import { formatIban, ibanError, normalizeIban } from '../../../../shared/iban';
+import { namesMatch } from '../../../../shared/names';
+import { createOperatorRecovery } from '../../../common/operator-recovery';
+import type { OnboardingStatus } from '../../types';
+import { esign, external, local } from './activity-proxies';
+import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from './messages';
 import type {
-  Contract,
   ContractSigned,
-  OnboardingStatus,
+  ContractSigningInput,
+  ContractSigningResult,
   PaymentDetails,
   PaymentMandate,
-  Quote,
-} from '../shared/types';
-import { esign, external, local } from './activity-proxies';
-import { createOperatorRecovery, type ParkedStep } from './operator-recovery';
-
-export interface ContractSigningInput {
-  leadId: string;
-  quote: Quote;
-  signerEmail: string;
-  customerName: string;
-  /** From the application. Missing or failing verification -> an agent form is opened. */
-  iban?: string;
-  signatureTimeout?: Duration;
-}
-
-export type ContractSigningResult =
-  | { outcome: 'SIGNED'; contract: Contract; mandate: PaymentMandate; signedAt: string; signerName?: string }
-  | { outcome: 'EXPIRED'; contract: Contract; mandate: PaymentMandate };
-
-export type SigningStage =
-  | 'CREATING_CONTRACT'
-  | 'VERIFYING_PAYMENT_DETAILS'
-  | 'AWAITING_AGENT'
-  | 'SENDING_FOR_SIGNATURE'
-  | 'AWAITING_SIGNATURE'
-  | 'SIGNED'
-  | 'EXPIRED';
-
-/** An open work item for a human agent: supply a valid IBAN for the direct-debit mandate. */
-export interface AgentForm {
-  type: 'COLLECT_IBAN';
-  leadId: string;
-  customerName: string;
-  /** Why the form is (re)opened: missing IBAN, or why the previous value was rejected. */
-  reason: string;
-  /** Submissions rejected so far. */
-  rejectedSubmissions: number;
-  openedAt: string;
-  prefill: { accountHolder: string; iban?: string };
-}
-
-export interface SigningState {
-  stage: SigningStage;
-  contract?: Contract;
-  mandate?: PaymentMandate;
-  /** Present while the workflow waits for an agent. */
-  agentForm?: AgentForm;
-  /** Set while a step has exhausted its retries and waits for an operator. */
-  needsAttention?: ParkedStep;
-}
-
-export type SubmitPaymentDetailsResult =
-  | { accepted: true; mandate: PaymentMandate }
-  | { accepted: false; reason: string; rejectedSubmissions: number };
-
-export const contractSignedSignal = defineSignal<[ContractSigned]>('contractSigned');
-export const getSigningStateQuery = defineQuery<SigningState>('getSigningState');
-/**
- * The agent form's submit. Malformed input is rejected by the validator (nothing is recorded in
- * history, the form stays open). Well-formed input is verified by the workflow; the update returns
- * that verdict, and on rejection the form is reopened with the reason.
- */
-export const submitPaymentDetailsUpdate = defineUpdate<SubmitPaymentDetailsResult, [PaymentDetails]>(
-  'submitPaymentDetails',
-);
+  PendingSubmission,
+  SigningState,
+  SubmitPaymentDetailsResult,
+} from './types';
 
 /**
  * Child workflow: contract -> payment details (agent form if needed) -> e-signature -> signature.
@@ -99,7 +33,7 @@ export async function contractSigning(input: ContractSigningInput): Promise<Cont
   let leadStatus: OnboardingStatus = 'CONTRACTING';
 
   // Agent form submissions: the update handler hands one over and waits for the verdict.
-  let submission: { id: number; details: PaymentDetails } | undefined;
+  let submission: PendingSubmission | undefined;
   let submissionCount = 0;
   const verdicts = new Map<number, SubmitPaymentDetailsResult>();
 

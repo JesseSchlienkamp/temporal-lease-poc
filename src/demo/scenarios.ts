@@ -4,13 +4,10 @@ import pc from 'picocolors';
 import { spawn } from 'node:child_process';
 import { resetToFirstWorkflowTask } from '../scripts/reset-workflow';
 import { formatIban } from '../shared/iban';
-import {
-  getSigningStateQuery,
-  operatorActionUpdate,
-  quoteDecisionSignal,
-  submitPaymentDetailsUpdate,
-  type SigningState,
-} from '../workflows';
+import { operatorActionUpdate } from '../workflows/common/messages';
+import { quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
+import { getSigningStateQuery, submitPaymentDetailsUpdate } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/messages';
+import type { SigningState } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
 import {
   API_URL,
   chaos,
@@ -23,22 +20,9 @@ import {
   pressEnter,
   sleep,
   startLead,
-  type DemoContext,
-  type FollowHooks,
-  type FollowResult,
-  type Lead,
   truncate,
 } from './runtime';
-
-export interface Scenario {
-  id: string;
-  group: string;
-  title: string;
-  hint: string;
-  duration: string;
-  expect: string[];
-  run(ctx: DemoContext): Promise<FollowResult>;
-}
+import type { DemoContext, FollowHooks, FollowResult, Lead, Scenario } from './types';
 
 // --- Shared interactive pieces ---------------------------------------------------------------------
 

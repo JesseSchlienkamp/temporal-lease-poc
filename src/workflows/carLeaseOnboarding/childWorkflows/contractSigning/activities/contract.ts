@@ -1,6 +1,7 @@
-import { getDb } from '../db/database';
-import type { Contract, Quote } from '../shared/types';
-import { callExternal, tracked } from './support';
+import { getDb } from '../../../../../db/database';
+import type { Quote } from '../../../types';
+import type { Contract } from '../types';
+import { callExternal, tracked } from '../../../../common/activity-support';
 
 export async function createContract(leadId: string, quote: Quote): Promise<Contract> {
   return tracked(leadId, 'createContract', () => {
@@ -34,18 +35,5 @@ export async function requestSignature(leadId: string, contractId: string, email
 export async function expireContract(leadId: string, contractId: string): Promise<void> {
   return tracked(leadId, 'expireContract', () => {
     getDb().prepare(`UPDATE contracts SET status = 'EXPIRED' WHERE id = ?`).run(contractId);
-  });
-}
-
-export async function activateLease(leadId: string, contractId: string, signedAt: string): Promise<void> {
-  return tracked(leadId, 'activateLease', () => {
-    const db = getDb();
-    db.transaction(() => {
-      db.prepare(`UPDATE contracts SET status = 'SIGNED', signed_at = ? WHERE id = ?`).run(signedAt, contractId);
-      db.prepare(`UPDATE quotes SET status = 'ACCEPTED' WHERE lead_id = ?`).run(leadId);
-      db.prepare(`UPDATE vehicle_reservations SET status = 'LEASED' WHERE lead_id = ? AND status = 'RESERVED'`).run(
-        leadId,
-      );
-    })();
   });
 }

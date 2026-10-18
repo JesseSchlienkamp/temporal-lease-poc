@@ -1,7 +1,7 @@
-import { getDb } from '../db/database';
-import { tracked } from './support';
+import { getDb } from '../../../../../db/database';
+import { tracked } from '../../../../common/activity-support';
+import type { AgentTaskType } from '../types';
 
-export type AgentTaskType = 'COLLECT_IBAN';
 
 const agentTaskId = (workflowId: string, type: AgentTaskType) => `${workflowId}:${type}`;
 

@@ -3,19 +3,14 @@ import express, { type ErrorRequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config';
 import { signingWorkflowId } from '../shared/ids';
-import type { LeadInput, OnboardingOptions } from '../shared/types';
 import { connectClient } from '../temporal-connection';
-import {
-  carLeaseOnboarding,
-  contractSignedSignal,
-  getSigningStateQuery,
-  getStateQuery,
-  operatorActionUpdate,
-  quoteDecisionSignal,
-  submitPaymentDetailsUpdate,
-  type AgentForm,
-  type OperatorCommand,
-} from '../workflows';
+import { operatorActionUpdate } from '../workflows/common/messages';
+import type { OperatorCommand } from '../workflows/common/types';
+import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
+import type { LeadInput, OnboardingOptions } from '../workflows/carLeaseOnboarding/types';
+import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/workflow';
+import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/messages';
+import type { AgentForm } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
 import { agentPage } from './agent-page';
 
 async function main() {
@@ -31,7 +26,7 @@ async function main() {
   app.post('/leads', async (req, res) => {
     const { options, ...lead } = req.body as LeadInput & { options?: OnboardingOptions };
     const leadId = `lead-${randomUUID().slice(0, 8)}`;
-    await client.workflow.start(carLeaseOnboarding, {
+    await client.workflow.start<typeof carLeaseOnboarding>('carLeaseOnboarding', {
       taskQueue: config.taskQueue,
       workflowId: leadId,
       args: [lead, options ?? {}],

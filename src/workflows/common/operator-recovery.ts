@@ -1,25 +1,7 @@
 import { RetryState } from '@temporalio/common';
-import { ActivityFailure, ApplicationFailure, condition, defineUpdate, setHandler } from '@temporalio/workflow';
-
-export type OperatorAction = 'retry' | 'abort';
-
-export interface OperatorCommand {
-  action: OperatorAction;
-  note?: string;
-}
-
-/** A step that ran out of retries and is waiting for an operator. */
-export interface ParkedStep {
-  step: string;
-  error: string;
-  since: string;
-}
-
-/**
- * Operator decision for a parked step. An update rather than a signal, so the command is rejected
- * (and the caller gets an error) when nothing is waiting for an operator.
- */
-export const operatorActionUpdate = defineUpdate<ParkedStep, [OperatorCommand]>('operatorAction');
+import { ActivityFailure, ApplicationFailure, condition, setHandler } from '@temporalio/workflow';
+import { operatorActionUpdate } from './messages';
+import type { GuardOptions, OperatorCommand, ParkedStep, RecoveryHooks } from './types';
 
 /**
  * True when the activity gave up only because it ran out of attempts (or time) on retryable
@@ -37,13 +19,6 @@ export function rootCauseMessage(err: unknown): string {
   let current = err;
   while (current instanceof Error && current.cause instanceof Error) current = current.cause;
   return current instanceof Error ? current.message : String(current);
-}
-
-interface RecoveryHooks {
-  /** Called when a step is parked, e.g. to update status and the database. */
-  onPark(parked: ParkedStep): Promise<void>;
-  /** Called after the operator has decided, before the step is retried or the workflow aborts. */
-  onResume(parked: ParkedStep, command: OperatorCommand): Promise<void>;
 }
 
 /**
@@ -70,15 +45,7 @@ export function createOperatorRecovery(hooks: RecoveryHooks) {
     },
   );
 
-  /**
-   * @param parkOn decides which failures park the step; by default activities that exhausted their
-   *               retries on retryable errors.
-   */
-  async function guard<T>(
-    step: string,
-    fn: () => Promise<T>,
-    { parkOn = canRetryLater }: { parkOn?: (err: unknown) => boolean } = {},
-  ): Promise<T> {
+  async function guard<T>(step: string, fn: () => Promise<T>, { parkOn = canRetryLater }: GuardOptions = {}): Promise<T> {
     for (;;) {
       try {
         return await fn();

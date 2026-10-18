@@ -21,7 +21,7 @@
     "db:show": "tsx src/scripts/show-db.ts",
     "reset": "tsx src/scripts/reset-workflow.ts",
     "chaos": "tsx src/scripts/chaos.ts",
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test 'src/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

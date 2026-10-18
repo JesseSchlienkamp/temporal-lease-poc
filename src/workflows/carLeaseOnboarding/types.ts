@@ -1,6 +1,10 @@
-// Types shared between workflows, activities and clients.
-// Keep this file free of runtime imports: it is loaded inside the workflow sandbox.
+// Types of the carLeaseOnboarding workflow: input, state, and the payloads of its activities.
+// Type-only: safe to import inside the workflow sandbox.
 import type { Duration } from '@temporalio/common';
+import type { ParkedStep } from '../common/types';
+import type { Contract, PaymentMandate } from './childWorkflows/contractSigning/types';
+
+// --- Input ---------------------------------------------------------------------------------------
 
 export interface LeadInput {
   firstName: string;
@@ -30,6 +34,8 @@ export interface OnboardingOptions {
   signatureTimeout?: Duration;
 }
 
+// --- State (returned by the getState query and as the workflow result) ---------------------------
+
 export type OnboardingStatus =
   | 'LEAD_RECEIVED'
   | 'QUALIFIED'
@@ -47,6 +53,37 @@ export type OnboardingStatus =
   | 'ACTIVE'
   | 'NEEDS_ATTENTION'
   | 'FAILED';
+
+export interface StatusChange {
+  status: OnboardingStatus;
+  at: string;
+  note?: string;
+}
+
+export interface OnboardingState {
+  leadId: string;
+  status: OnboardingStatus;
+  history: StatusChange[];
+  creditScore?: number;
+  reservation?: VehicleReservation;
+  quote?: Quote;
+  contract?: Contract;
+  /** Set while a step has exhausted its retries and waits for an operator. */
+  needsAttention?: ParkedStep;
+  /** Direct-debit mandate, once the signing child has verified the IBAN. */
+  mandate?: PaymentMandate;
+  /** Id of the contract-signing child workflow, once started. */
+  signingWorkflowId?: string;
+}
+
+// --- Messages ------------------------------------------------------------------------------------
+
+export interface QuoteDecision {
+  accepted: boolean;
+  reason?: string;
+}
+
+// --- Activity payloads ---------------------------------------------------------------------------
 
 export interface QualificationResult {
   qualified: boolean;
@@ -74,52 +111,4 @@ export interface Quote {
   downPayment: number;
 }
 
-export interface Contract {
-  contractId: string;
-  envelopeId?: string;
-  signingUrl?: string;
-}
-
-export interface QuoteDecision {
-  accepted: boolean;
-  reason?: string;
-}
-
-export interface ContractSigned {
-  signedAt: string;
-  signerName?: string;
-}
-
-export interface OnboardingState {
-  leadId: string;
-  status: OnboardingStatus;
-  history: { status: OnboardingStatus; at: string; note?: string }[];
-  creditScore?: number;
-  reservation?: VehicleReservation;
-  quote?: Quote;
-  contract?: Contract;
-  /** Set while a step has exhausted its retries and waits for an operator. */
-  needsAttention?: { step: string; error: string; since: string };
-  /** Direct-debit mandate, once the signing child has verified the IBAN. */
-  mandate?: PaymentMandate;
-  /** Id of the contract-signing child workflow, once started. */
-  signingWorkflowId?: string;
-}
-
-/** What an agent (or the customer's application) supplies for the direct-debit mandate. */
-export interface PaymentDetails {
-  iban: string;
-  accountHolder: string;
-}
-
-/** Result of the bank's IBAN-name check. */
-export interface BankAccountCheck {
-  result: 'MATCH' | 'NO_MATCH' | 'ACCOUNT_CLOSED' | 'NOT_FOUND';
-  registeredName?: string;
-}
-
-export interface PaymentMandate {
-  mandateReference: string;
-  iban: string;
-  accountHolder: string;
-}
+export type EmailTemplate = 'quote' | 'credit-rejected' | 'contract-ready' | 'welcome';

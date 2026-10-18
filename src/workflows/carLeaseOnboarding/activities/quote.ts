@@ -1,6 +1,6 @@
-import { getDb } from '../db/database';
-import type { CreditCheckResult, LeadInput, Quote, VehicleReservation } from '../shared/types';
-import { tracked } from './support';
+import { getDb } from '../../../db/database';
+import type { CreditCheckResult, LeadInput, Quote, VehicleReservation } from '../types';
+import { tracked } from '../../common/activity-support';
 
 export async function createQuote(
   leadId: string,

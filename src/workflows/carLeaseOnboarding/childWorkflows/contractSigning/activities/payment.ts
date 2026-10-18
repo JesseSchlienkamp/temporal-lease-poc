@@ -1,7 +1,7 @@
-import { getDb } from '../db/database';
-import { normalizeIban } from '../shared/iban';
-import type { BankAccountCheck, PaymentDetails, PaymentMandate } from '../shared/types';
-import { callExternal, tracked } from './support';
+import { getDb } from '../../../../../db/database';
+import { normalizeIban } from '../../../../../shared/iban';
+import type { BankAccountCheck, MandateSource, PaymentDetails, PaymentMandate } from '../types';
+import { callExternal, tracked } from '../../../../common/activity-support';
 
 /** IBAN-name check at the (mock) bank: does this account exist, is it open, and is it in this name? */
 export async function verifyBankAccount(leadId: string, details: PaymentDetails): Promise<BankAccountCheck> {
@@ -25,7 +25,7 @@ export async function findPaymentMandate(leadId: string): Promise<PaymentMandate
 export async function savePaymentMandate(
   leadId: string,
   details: PaymentDetails,
-  source: 'APPLICATION' | 'AGENT',
+  source: MandateSource,
 ): Promise<PaymentMandate> {
   return tracked(leadId, 'savePaymentMandate', () => {
     const mandate: PaymentMandate = {

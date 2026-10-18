@@ -10,8 +10,9 @@ import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { bullets, Cancelled, chaosReset, chaosSettings, cmd, preflight, summarize, type DemoContext } from './runtime';
-import { runScenario, scenarios, type Scenario } from './scenarios';
+import { bullets, Cancelled, chaosReset, chaosSettings, cmd, preflight, summarize } from './runtime';
+import { runScenario, scenarios } from './scenarios';
+import type { DemoContext, MenuChoice, Scenario } from './types';
 
 const { values: flags, positionals } = parseArgs({
   allowPositionals: true,
@@ -34,8 +35,6 @@ async function play(ctx: DemoContext, scenario: Scenario) {
   const result = await runScenario(ctx, scenario);
   await summarize(ctx, result);
 }
-
-type MenuChoice = string | 'tool:chaos' | 'tool:chaos-reset' | 'tool:tests' | 'tool:recheck' | 'exit';
 
 async function menu(ctx: DemoContext) {
   let lastGroup = '';

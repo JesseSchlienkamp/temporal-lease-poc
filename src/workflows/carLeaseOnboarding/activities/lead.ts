@@ -1,6 +1,6 @@
-import { getDb } from '../db/database';
-import type { LeadInput, OnboardingStatus, QualificationResult } from '../shared/types';
-import { tracked } from './support';
+import { getDb } from '../../../db/database';
+import type { LeadInput, OnboardingStatus, QualificationResult } from '../types';
+import { tracked } from '../../common/activity-support';
 
 const MIN_AGE = 18;
 const MIN_ANNUAL_INCOME = 25_000;

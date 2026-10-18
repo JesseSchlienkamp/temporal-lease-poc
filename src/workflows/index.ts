@@ -1,3 +1,4 @@
-export * from './onboarding';
-export * from './contract-signing';
-export * from './operator-recovery';
+// Workflow registry for the worker (workflowsPath). Every exported function becomes a workflow
+// type, so export workflow functions only: messages and types are imported from their own files.
+export { carLeaseOnboarding } from './carLeaseOnboarding/workflow';
+export { contractSigning } from './carLeaseOnboarding/childWorkflows/contractSigning/workflow';

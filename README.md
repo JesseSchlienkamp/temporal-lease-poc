@@ -68,23 +68,40 @@ Any other well-formed IBAN is "not found".
 
 ## Layout
 
+Each workflow has its own folder with its activities next to it. Child workflows live under their
+parent's `childWorkflows/` folder. Types sit in `types.ts`, and signals, queries and updates in
+`messages.ts`, so clients can import them without loading workflow code.
+
 ```
 src/
-  workflows/onboarding.ts       parent workflow: steps, signals, query, compensation
-  workflows/contract-signing.ts child workflow: contract, IBAN / agent form, e-signature, wait for signature
-  workflows/activity-proxies.ts retry policies and timeouts for local and external activities
-  workflows/onboarding.test.ts  tests with mocked activities (time-skipping test server)
-  activities/                   one file per domain; each writes to SQLite + audit trail
-  activities/support.ts         HTTP helper: 5xx/408/429/network → retryable, other 4xx → non-retryable
-  db/database.ts                SQLite schema (leads, credit_checks, vehicle_reservations, quotes, contracts, workflow_events)
-  mock-services/server.ts       fake credit bureau / inventory / e-sign / email with chaos controls
-  api/server.ts                 HTTP API: start onboarding, signal, query, agent inbox
-  api/agent-page.ts             agent inbox page (GET /agent)
-  shared/iban.ts                IBAN format + mod-97 checksum (also runs in the workflow sandbox)
-  worker.ts                     Temporal worker
-  demo/                         interactive demo CLI (npm run demo): scenarios, runner, summary
-  scripts/                      CLI demo driver, DB viewer, workflow reset, chaos switch
-infra/                          Bicep + deploy script for Azure Container Apps
+  workflows/
+    index.ts                        workflow registry (worker's workflowsPath): workflow functions only
+    activities.ts                   activity registry: merges every activities/ folder
+    common/                         shared by all workflows
+      activity-options.ts           retry policies and timeouts (local, external, e-sign)
+      activity-support.ts           tracked() audit rows, callExternal(): 5xx/408/429 retryable, other 4xx not
+      operator-recovery.ts          recovery.guard: park a step that ran out of retries
+      messages.ts, types.ts         operatorAction update, OperatorCommand, ParkedStep
+    carLeaseOnboarding/
+      workflow.ts                   lead → credit → vehicle → quote → [child] → active lease
+      messages.ts, types.ts         quoteDecision signal, getState query; LeadInput, OnboardingState, …
+      activity-proxies.ts           proxies for this workflow's activities
+      activities/                   lead, credit, vehicle, quote, lease, notification
+      workflow.test.ts              tests with mocked activities (time-skipping test server)
+      childWorkflows/
+        contractSigning/
+          workflow.ts               contract → IBAN (agent form if needed) → e-sign → signature
+          messages.ts, types.ts     contractSigned, getSigningState, submitPaymentDetails; SigningState, …
+          activity-proxies.ts       own activities + updateLeadStatus / sendEmail from the parent
+          activities/               contract, payment, agentTask
+  shared/                           pure helpers, also used in the workflow sandbox: iban, names, ids
+  db/database.ts                    SQLite schema (leads, credit_checks, vehicle_reservations, quotes, contracts, …)
+  mock-services/                    fake credit bureau / inventory / e-sign / email / bank with chaos controls
+  api/                              HTTP API (start, signal, query, operator, agent inbox) + agent page
+  demo/                             interactive demo CLI (npm run demo)
+  scripts/                          CLI lead driver, DB viewer, workflow reset, chaos switch
+  worker.ts                         Temporal worker
+infra/                              Bicep + deploy script for Azure Container Apps
 Dockerfile, docker-compose.yml
 ```
 
@@ -137,7 +154,7 @@ npm run lead -- --auto --scenario esign-outage # e-sign provider down: the signi
 
 1. `npm run lead -- --auto --scenario esign-outage` switches the mock e-sign provider down (every
    call returns 502) and starts a lead with a valid IBAN.
-2. The e-sign call is allowed **3 attempts** (`esign` in `activity-proxies.ts`). After the third
+2. The e-sign call is allowed **3 attempts** (`ESIGN_ACTIVITY` in `src/workflows/common/activity-options.ts`). After the third
    502 the signing child **fails**; the Temporal UI shows `<leadId>-signing` as Failed with the 502.
 3. The parent doesn't fail. It goes to `NEEDS_ATTENTION` (step `contractSigning`), and the
    vehicle **stays reserved**. The CLI prints the next two commands:
@@ -261,8 +278,8 @@ Scenarios worth showing:
    In `workflow_events`, only `createContract`, `requestSignature` and `sendEmail:contract-ready`
    appear twice.
 
-Retry policies live in `src/workflows/activity-proxies.ts`. External calls are wrapped in
-`recovery.guard` (`src/workflows/operator-recovery.ts`). When a call runs out of attempts (10), the
+Retry policies live in `src/workflows/common/activity-options.ts`. External calls are wrapped in
+`recovery.guard` (`src/workflows/common/operator-recovery.ts`). When a call runs out of attempts (10), the
 workflow doesn't fail: it parks the step and waits for an operator, without a timeout. The
 operator command is a workflow **update**, not a signal, so the workflow can reject it when nothing
 is parked; the API returns 409 in that case. Non-retryable failures (such as the unknown-model 404)
@@ -274,7 +291,7 @@ still fail the workflow immediately, because retrying the same input won't help.
 npm test
 ```
 
-`src/workflows/onboarding.test.ts` replaces the activities with mocks that throw on purpose. The
+`src/workflows/carLeaseOnboarding/workflow.test.ts` replaces the activities with mocks that throw on purpose. The
 tests check that a flaky service is retried until it succeeds (attempts `[1, 2, 3]`), that a
 service that stays down is called `maximumAttempts` times and then parked until an operator sends
 `retry`, that an operator `abort` fails the lead and releases the vehicle, that a non-retryable

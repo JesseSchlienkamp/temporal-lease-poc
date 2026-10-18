@@ -11,13 +11,14 @@ import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Runtime, DefaultLogger, Worker } from '@temporalio/worker';
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
+import { signingWorkflowId } from '../../shared/ids';
 import type * as activities from '../activities';
-import { signingWorkflowId } from '../shared/ids';
-import type { LeadInput, OnboardingStatus, PaymentMandate } from '../shared/types';
-import type { SigningState } from './contract-signing';
-import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from './contract-signing';
-import { carLeaseOnboarding, getStateQuery, quoteDecisionSignal } from './onboarding';
-import { operatorActionUpdate } from './operator-recovery';
+import { operatorActionUpdate } from '../common/messages';
+import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from './childWorkflows/contractSigning/messages';
+import type { PaymentMandate, SigningState } from './childWorkflows/contractSigning/types';
+import { getStateQuery, quoteDecisionSignal } from './messages';
+import type { LeadInput, OnboardingStatus } from './types';
+import { carLeaseOnboarding } from './workflow';
 
 type Activities = typeof activities;
 
@@ -91,7 +92,7 @@ describe('carLeaseOnboarding', () => {
     const worker = await Worker.create({
       connection: env.nativeConnection,
       taskQueue,
-      workflowsPath: require.resolve('./index'),
+      workflowsPath: require.resolve('../index'),
       activities: acts,
     });
     return worker.runUntil(fn(taskQueue));

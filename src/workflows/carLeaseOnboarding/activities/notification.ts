@@ -1,6 +1,5 @@
-import { callExternal, tracked } from './support';
-
-export type EmailTemplate = 'quote' | 'credit-rejected' | 'contract-ready' | 'welcome';
+import { callExternal, tracked } from '../../common/activity-support';
+import type { EmailTemplate } from '../types';
 
 /** Sends an email through the (flaky) notification service. */
 export async function sendEmail(

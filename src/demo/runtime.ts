@@ -4,17 +4,13 @@ import pc from 'picocolors';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config';
 import { signingWorkflowId } from '../shared/ids';
-import type { LeadInput, OnboardingOptions, OnboardingState, OnboardingStatus } from '../shared/types';
 import { connectClient } from '../temporal-connection';
-import {
-  carLeaseOnboarding,
-  contractSignedSignal,
-  getSigningStateQuery,
-  getStateQuery,
-  quoteDecisionSignal,
-  type ParkedStep,
-  type SigningState,
-} from '../workflows';
+import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
+import type { LeadInput, OnboardingOptions, OnboardingState, OnboardingStatus } from '../workflows/carLeaseOnboarding/types';
+import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/workflow';
+import { contractSignedSignal, getSigningStateQuery } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/messages';
+import type { SigningState } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
+import type { DemoContext, FollowHooks, FollowResult, Lead, PendingActivity, StepStats } from './types';
 
 export const API_URL = `http://localhost:${config.apiPort}`;
 export const UI_URL = 'http://localhost:8233';
@@ -22,12 +18,6 @@ export const workflowUrl = (workflowId: string) =>
   `${UI_URL}/namespaces/${config.temporal.namespace}/workflows/${encodeURIComponent(workflowId)}`;
 
 export class Cancelled extends Error {}
-
-export interface DemoContext {
-  client: Client;
-  /** Non-interactive: every prompt takes its default answer. */
-  auto: boolean;
-}
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -186,7 +176,7 @@ export const demoLead = (overrides: Partial<LeadInput> = {}): LeadInput => ({
 
 export async function startLead(ctx: DemoContext, lead: LeadInput, options: OnboardingOptions = {}) {
   const leadId = `lead-${randomUUID().slice(0, 8)}`;
-  const handle = await ctx.client.workflow.start(carLeaseOnboarding, {
+  const handle = await ctx.client.workflow.start<typeof carLeaseOnboarding>('carLeaseOnboarding', {
     taskQueue: config.taskQueue,
     workflowId: leadId,
     args: [lead, { quoteDecisionTimeout: '30 minutes', signatureTimeout: '30 minutes', ...options }],
@@ -197,12 +187,6 @@ export async function startLead(ctx: DemoContext, lead: LeadInput, options: Onbo
     )}\n${pc.dim(workflowUrl(leadId))}`,
   );
   return handle;
-}
-
-export interface PendingActivity {
-  type: string;
-  attempt: number;
-  lastFailure?: string;
 }
 
 async function pendingActivities(handle: WorkflowHandle): Promise<PendingActivity[]> {
@@ -216,43 +200,6 @@ async function pendingActivities(handle: WorkflowHandle): Promise<PendingActivit
   } catch {
     return [];
   }
-}
-
-export interface Tick {
-  state: OnboardingState;
-  signing?: SigningState;
-  pending: PendingActivity[];
-  waiter: Waiter;
-}
-
-export interface FollowHooks {
-  /** What the customer does with the quote. 'manual' = the scenario sends the signal itself. */
-  quote?: 'accept' | 'decline' | 'manual';
-  /** Called once when the quote is sent and quote = 'manual'. */
-  onQuoteSent?(lead: Lead): Promise<void>;
-  /** Called every time the signing child is waiting for an agent. Should return once something changed. */
-  onAgentForm?(lead: Lead, signing: SigningState): Promise<void>;
-  /** Called every time a step is parked for an operator. Should send an operator command. */
-  onNeedsAttention?(lead: Lead, parked: ParkedStep, where: 'lead' | 'signing child'): Promise<void>;
-  /** Called when a signing child run waits for the signature. Default: the customer signs. */
-  onAwaitingSignature?(lead: Lead, runNumber: number): Promise<void>;
-  /** Called on every poll, e.g. to change the mock services mid-flight. */
-  onTick?(tick: Tick): Promise<void>;
-}
-
-export interface Lead {
-  ctx: DemoContext;
-  leadId: string;
-  handle: WorkflowHandle<typeof carLeaseOnboarding>;
-  child: WorkflowHandle;
-  waiter: Waiter;
-  sign(): Promise<void>;
-}
-
-export interface FollowResult {
-  leadId: string;
-  state?: OnboardingState;
-  error?: string;
 }
 
 /**
@@ -435,14 +382,6 @@ export async function summarize(ctx: DemoContext, result: FollowResult): Promise
     ].join('\n'),
     `Result · ${leadId}`,
   );
-}
-
-interface StepStats {
-  runs: number;
-  retries: number;
-  failed: boolean;
-  completed: boolean;
-  lastError?: string;
 }
 
 /** Activities that legitimately run more than once per lead; don't report them as re-runs. */

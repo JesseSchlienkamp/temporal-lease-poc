@@ -1,6 +1,6 @@
-import { getDb } from '../db/database';
-import type { CreditCheckResult, LeadInput } from '../shared/types';
-import { callExternal, tracked } from './support';
+import { getDb } from '../../../db/database';
+import type { CreditCheckResult, LeadInput } from '../types';
+import { callExternal, tracked } from '../../common/activity-support';
 
 const MIN_CREDIT_SCORE = 620;
 

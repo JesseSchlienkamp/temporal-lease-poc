@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { config } from '../config';
 import { normalizeIban } from '../shared/iban';
 import { namesMatch } from '../shared/names';
+import type { BankAccount, Chaos, Reservation, ServiceName } from './types';
 
 /**
  * Stand-ins for the external systems the onboarding depends on, with configurable failures so
@@ -15,14 +16,6 @@ import { namesMatch } from '../shared/names';
  *
  * Inspect / change at runtime:  GET /admin/chaos   POST /admin/chaos   POST /admin/chaos/reset
  */
-
-type ServiceName = 'creditBureau' | 'inventory' | 'esign' | 'notifications' | 'bank';
-interface Chaos {
-  failFirstN: number;
-  failureRate: number;
-  latencyMs: number;
-  errorStatus: number;
-}
 
 const DEFAULT_CHAOS: Record<ServiceName, Chaos> = {
   creditBureau: { failFirstN: 2, failureRate: 0, latencyMs: 300, errorStatus: 503 },
@@ -79,14 +72,14 @@ const VEHICLES: Record<string, number> = {
 };
 
 // The bank's records for the IBAN-name check. Any other valid IBAN is NOT_FOUND.
-const BANK_ACCOUNTS: Record<string, { holder: string; closed?: boolean }> = {
+const BANK_ACCOUNTS: Record<string, BankAccount> = {
   NL91ABNA0417164300: { holder: 'J. Jansen' },
   NL20INGB0001234567: { holder: 'P. de Vries' },
   NL44RABO0123456789: { holder: 'J. Jansen', closed: true },
   NL51ABNA0987654321: { holder: 'P. Bakker' },
 };
 
-const reservations = new Map<string, { reservationId: string; vin: string; vehicleModel: string; listPrice: number }>();
+const reservations = new Map<string, Reservation>();
 
 const hashInt = (value: string, mod: number) => parseInt(createHash('sha256').update(value).digest('hex').slice(0, 8), 16) % mod;
 

@@ -2,29 +2,18 @@ import {
   CancellationScope,
   ChildWorkflowFailure,
   condition,
-  defineQuery,
-  defineSignal,
   isCancellation,
   log,
   setHandler,
   startChild,
   workflowInfo,
 } from '@temporalio/workflow';
-import { signingWorkflowId } from '../shared/ids';
-import type {
-  LeadInput,
-  OnboardingOptions,
-  OnboardingState,
-  OnboardingStatus,
-  QuoteDecision,
-} from '../shared/types';
+import { signingWorkflowId } from '../../shared/ids';
+import { createOperatorRecovery, rootCauseMessage } from '../common/operator-recovery';
 import { external, local } from './activity-proxies';
-import { contractSigning } from './contract-signing';
-import { createOperatorRecovery, rootCauseMessage } from './operator-recovery';
-
-// --- Signals & queries -------------------------------------------------------------------------
-export const quoteDecisionSignal = defineSignal<[QuoteDecision]>('quoteDecision');
-export const getStateQuery = defineQuery<OnboardingState>('getState');
+import { contractSigning } from './childWorkflows/contractSigning/workflow';
+import { getStateQuery, quoteDecisionSignal } from './messages';
+import type { LeadInput, OnboardingOptions, OnboardingState, OnboardingStatus, QuoteDecision } from './types';
 
 /**
  * Lead -> qualification -> credit check -> vehicle reservation -> quote -> (customer accepts)

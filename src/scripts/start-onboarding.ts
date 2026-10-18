@@ -20,16 +20,12 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { config } from '../config';
 import { signingWorkflowId } from '../shared/ids';
-import type { LeadInput, OnboardingStatus } from '../shared/types';
 import { connectClient } from '../temporal-connection';
-import {
-  carLeaseOnboarding,
-  contractSignedSignal,
-  getSigningStateQuery,
-  getStateQuery,
-  quoteDecisionSignal,
-  type SigningStage,
-} from '../workflows';
+import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
+import type { LeadInput, OnboardingStatus } from '../workflows/carLeaseOnboarding/types';
+import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/workflow';
+import { contractSignedSignal, getSigningStateQuery } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/messages';
+import type { SigningStage } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
 
 const SCENARIOS = {
   happy: { iban: 'NL91ABNA0417164300' },
@@ -82,7 +78,7 @@ async function main() {
   }
 
   const leadId = `lead-${randomUUID().slice(0, 8)}`;
-  const handle = await client.workflow.start(carLeaseOnboarding, {
+  const handle = await client.workflow.start<typeof carLeaseOnboarding>('carLeaseOnboarding', {
     taskQueue: config.taskQueue,
     workflowId: leadId,
     args: [lead, { quoteDecisionTimeout: '10 minutes', signatureTimeout: '10 minutes' }],

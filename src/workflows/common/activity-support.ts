@@ -1,8 +1,8 @@
 import { ApplicationFailure, Context, log } from '@temporalio/activity';
-import { config } from '../config';
-import { getDb } from '../db/database';
+import { config } from '../../config';
+import { getDb } from '../../db/database';
+import type { AuditOutcome } from './types';
 
-type Outcome = 'STARTED' | 'SUCCEEDED' | 'FAILED';
 
 function currentAttempt(): number {
   try {
@@ -12,7 +12,7 @@ function currentAttempt(): number {
   }
 }
 
-export function recordEvent(leadId: string, step: string, outcome: Outcome, detail?: string): void {
+export function recordEvent(leadId: string, step: string, outcome: AuditOutcome, detail?: string): void {
   getDb()
     .prepare('INSERT INTO workflow_events (lead_id, step, attempt, outcome, detail) VALUES (?, ?, ?, ?, ?)')
     .run(leadId, step, currentAttempt(), outcome, detail ?? null);

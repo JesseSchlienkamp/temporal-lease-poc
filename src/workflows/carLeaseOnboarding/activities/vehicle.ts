@@ -1,6 +1,6 @@
-import { getDb } from '../db/database';
-import type { VehicleReservation } from '../shared/types';
-import { callExternal, tracked } from './support';
+import { getDb } from '../../../db/database';
+import type { VehicleReservation } from '../types';
+import { callExternal, tracked } from '../../common/activity-support';
 
 /** Reserves a car in the (flaky, slow) inventory system. Unknown models fail non-retryably (HTTP 404). */
 export async function reserveVehicle(leadId: string, vehicleModel: string): Promise<VehicleReservation> {
