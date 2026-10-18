@@ -11,6 +11,7 @@ import { Client } from '@temporalio/client';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { config } from '../config';
+import { signingWorkflowId } from '../shared/ids';
 import type { LeadInput, OnboardingStatus } from '../shared/types';
 import { connectClient } from '../temporal-connection';
 import { carLeaseOnboarding, contractSignedSignal, getStateQuery, quoteDecisionSignal } from '../workflows';
@@ -71,7 +72,10 @@ async function main() {
     }
     if (state.status === 'AWAITING_SIGNATURE' && !signalled.has('AWAITING_SIGNATURE')) {
       signalled.add('AWAITING_SIGNATURE');
-      await handle.signal(contractSignedSignal, { signedAt: new Date().toISOString(), signerName: `${lead.firstName} ${lead.lastName}` });
+      await client.workflow.getHandle(signingWorkflowId(leadId)).signal(contractSignedSignal, {
+        signedAt: new Date().toISOString(),
+        signerName: `${lead.firstName} ${lead.lastName}`,
+      });
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }

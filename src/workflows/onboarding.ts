@@ -4,49 +4,28 @@ import {
   defineQuery,
   defineSignal,
   log,
-  proxyActivities,
   setHandler,
+  startChild,
   workflowInfo,
 } from '@temporalio/workflow';
-import type * as activities from '../activities';
+import { signingWorkflowId } from '../shared/ids';
 import type {
-  ContractSigned,
   LeadInput,
   OnboardingOptions,
   OnboardingState,
   OnboardingStatus,
   QuoteDecision,
 } from '../shared/types';
-
-// --- Activity proxies --------------------------------------------------------------------------
-// Local database work: fast, should practically never fail.
-const local = proxyActivities<typeof activities>({
-  startToCloseTimeout: '10 seconds',
-  retry: { maximumAttempts: 5 },
-});
-
-// Calls to external systems: these are the flaky ones. Temporal retries them with exponential
-// backoff (1s, 2s, 4s, ... capped at 30s). Non-retryable failures (e.g. HTTP 404 for an unknown
-// vehicle model) skip the retries and fail immediately.
-const external = proxyActivities<typeof activities>({
-  startToCloseTimeout: '10 seconds', // a hanging call is abandoned after 10s and retried
-  retry: {
-    initialInterval: '1 second',
-    backoffCoefficient: 2,
-    maximumInterval: '30 seconds',
-    maximumAttempts: 10,
-    nonRetryableErrorTypes: ['ExternalServiceRejected'],
-  },
-});
+import { external, local } from './activity-proxies';
+import { contractSigning } from './contract-signing';
 
 // --- Signals & queries -------------------------------------------------------------------------
 export const quoteDecisionSignal = defineSignal<[QuoteDecision]>('quoteDecision');
-export const contractSignedSignal = defineSignal<[ContractSigned]>('contractSigned');
 export const getStateQuery = defineQuery<OnboardingState>('getState');
 
 /**
  * Lead -> qualification -> credit check -> vehicle reservation -> quote -> (customer accepts)
- *      -> contract -> e-signature -> (customer signs) -> active lease
+ *      -> [child: contract -> e-signature -> (customer signs)] -> active lease
  *
  * The workflow id is used as the lead id.
  */
@@ -56,14 +35,10 @@ export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOpt
   const compensations: Array<() => Promise<void>> = [];
 
   let quoteDecision: QuoteDecision | undefined;
-  let signature: ContractSigned | undefined;
 
   setHandler(getStateQuery, () => state);
   setHandler(quoteDecisionSignal, (decision) => {
     quoteDecision ??= decision;
-  });
-  setHandler(contractSignedSignal, (signed) => {
-    signature ??= signed;
   });
 
   async function setStatus(status: OnboardingStatus, note?: string): Promise<void> {
@@ -130,24 +105,26 @@ export async function carLeaseOnboarding(lead: LeadInput, options: OnboardingOpt
       return state;
     }
 
-    // 7. Contract + e-signature (flaky external call)
-    const draft = await local.createContract(leadId, quote);
-    state.contract = await external.requestSignature(leadId, draft.contractId, lead.email);
-    await external.sendEmail(leadId, lead.email, 'contract-ready', { signingUrl: state.contract.signingUrl });
-    await setStatus('AWAITING_SIGNATURE');
+    // 7. Contract + e-signature in a child workflow (see contract-signing.ts)
+    const signing = await startChild(contractSigning, {
+      workflowId: signingWorkflowId(leadId),
+      args: [{ leadId, quote, signerEmail: lead.email, signatureTimeout: options.signatureTimeout }],
+    });
+    state.signingWorkflowId = signing.workflowId;
+    await setStatus('AWAITING_SIGNATURE', `Signing workflow ${signing.workflowId}`);
 
-    // 8. Wait for the signature
-    const signed = await condition(() => signature !== undefined, options.signatureTimeout ?? '14 days');
-    if (!signed) {
-      await local.expireContract(leadId, draft.contractId);
+    // 8. Wait for the child. If the child is reset, this follows its new run.
+    const signed = await signing.result();
+    state.contract = signed.contract;
+    if (signed.outcome === 'EXPIRED') {
       await compensate();
       await setStatus('SIGNATURE_EXPIRED');
       return state;
     }
 
     // 9. Activate
-    await local.activateLease(leadId, draft.contractId, signature!.signedAt);
-    await setStatus('ACTIVE', `Signed ${signature!.signedAt}`);
+    await local.activateLease(leadId, signed.contract.contractId, signed.signedAt);
+    await setStatus('ACTIVE', `Signed ${signed.signedAt}`);
     await external.sendEmail(leadId, lead.email, 'welcome');
     return state;
   } catch (err) {

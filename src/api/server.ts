@@ -2,9 +2,16 @@ import { Client, WorkflowNotFoundError } from '@temporalio/client';
 import express, { type ErrorRequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config';
+import { signingWorkflowId } from '../shared/ids';
 import type { LeadInput, OnboardingOptions } from '../shared/types';
 import { connectClient } from '../temporal-connection';
-import { carLeaseOnboarding, contractSignedSignal, getStateQuery, quoteDecisionSignal } from '../workflows';
+import {
+  carLeaseOnboarding,
+  contractSignedSignal,
+  getSigningStateQuery,
+  getStateQuery,
+  quoteDecisionSignal,
+} from '../workflows';
 
 async function main() {
   const client = new Client({ connection: await connectClient(), namespace: config.temporal.namespace });
@@ -27,11 +34,19 @@ async function main() {
     res.status(202).json({ leadId, links: { status: `/leads/${leadId}` } });
   });
 
-  /** Live state straight from the running workflow (via a query). */
+  /** Live state straight from the running workflows (via queries), including the signing child once started. */
   app.get('/leads/:id', async (req, res) => {
     const handle = client.workflow.getHandle(req.params.id);
     const [description, state] = await Promise.all([handle.describe(), handle.query(getStateQuery)]);
-    res.json({ workflowStatus: description.status.name, ...state });
+
+    let signing;
+    if (state.signingWorkflowId) {
+      const child = client.workflow.getHandle(state.signingWorkflowId);
+      const [childDescription, childState] = await Promise.all([child.describe(), child.query(getSigningStateQuery)]);
+      signing = { workflowId: child.workflowId, workflowStatus: childDescription.status.name, ...childState };
+    }
+
+    res.json({ workflowStatus: description.status.name, ...state, signing });
   });
 
   /** Body: { accepted: boolean, reason?: string } */
@@ -45,11 +60,14 @@ async function main() {
     res.status(202).json({ ok: true });
   });
 
-  /** Simulates the e-signature provider's "envelope completed" webhook. Body: { signerName?: string } */
+  /**
+   * Simulates the e-signature provider's "envelope completed" webhook. Body: { signerName?: string }
+   * The signal goes to the lead's contract-signing child workflow.
+   */
   app.post('/leads/:id/sign', async (req, res) => {
     const { signerName } = (req.body ?? {}) as { signerName?: string };
     await client.workflow
-      .getHandle(req.params.id)
+      .getHandle(signingWorkflowId(req.params.id))
       .signal(contractSignedSignal, { signedAt: new Date().toISOString(), signerName });
     res.status(202).json({ ok: true });
   });

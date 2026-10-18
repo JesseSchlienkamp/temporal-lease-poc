@@ -5,15 +5,17 @@
  *   npm test
  */
 import { Context } from '@temporalio/activity';
-import { WorkflowFailedError } from '@temporalio/client';
+import { WorkflowFailedError, WorkflowNotFoundError } from '@temporalio/client';
 import { ApplicationFailure } from '@temporalio/common';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Runtime, DefaultLogger, Worker } from '@temporalio/worker';
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type * as activities from '../activities';
+import { signingWorkflowId } from '../shared/ids';
 import type { LeadInput, OnboardingStatus } from '../shared/types';
-import { carLeaseOnboarding, contractSignedSignal, quoteDecisionSignal } from './onboarding';
+import { contractSignedSignal } from './contract-signing';
+import { carLeaseOnboarding, quoteDecisionSignal } from './onboarding';
 
 type Activities = typeof activities;
 
@@ -86,6 +88,21 @@ describe('carLeaseOnboarding', () => {
     return worker.runUntil(fn(taskQueue));
   }
 
+  /** The signing child only exists once the parent reaches that step; wait for it, then sign. */
+  async function signWhenChildStarts(leadId: string): Promise<void> {
+    const child = env.client.workflow.getHandle(signingWorkflowId(leadId));
+    for (let i = 0; i < 100; i++) {
+      try {
+        await child.signal(contractSignedSignal, { signedAt: '2026-10-16T12:00:00Z' });
+        return;
+      } catch (err) {
+        if (!(err instanceof WorkflowNotFoundError)) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    throw new Error(`Signing child of ${leadId} never started`);
+  }
+
   it('retries a flaky credit bureau and still reaches ACTIVE', async () => {
     let failuresLeft = 2;
     const mock = mockActivities({
@@ -103,11 +120,13 @@ describe('carLeaseOnboarding', () => {
       });
       // Signals are buffered until the workflow gets to the point where it waits for them.
       await handle.signal(quoteDecisionSignal, { accepted: true });
-      await handle.signal(contractSignedSignal, { signedAt: '2026-10-16T12:00:00Z' });
+      await signWhenChildStarts(handle.workflowId);
       return handle.result();
     });
 
     assert.equal(result.status, 'ACTIVE');
+    assert.equal(result.signingWorkflowId, `lead-flaky-${n}-signing`);
+    assert.equal(mock.callsTo('activateLease').length, 1);
     assert.deepEqual(
       mock.callsTo('runCreditCheck').map((c) => c.attempt),
       [1, 2, 3],
@@ -159,5 +178,26 @@ describe('carLeaseOnboarding', () => {
 
     assert.equal(result.status, 'QUOTE_EXPIRED');
     assert.equal(mock.callsTo('releaseVehicle').length, 1);
+  });
+
+  it('runs signing as a child workflow; an expired signature releases the vehicle', async () => {
+    const mock = mockActivities();
+
+    const result = await run(mock.activities, async (taskQueue) => {
+      const handle = await env.client.workflow.start(carLeaseOnboarding, {
+        taskQueue,
+        workflowId: `lead-unsigned-${n}`,
+        args: [lead],
+      });
+      await handle.signal(quoteDecisionSignal, { accepted: true });
+      // Never sign: the time-skipping server jumps over the child's 14-day timer.
+      return handle.result();
+    });
+
+    assert.equal(result.status, 'SIGNATURE_EXPIRED');
+    assert.equal(mock.callsTo('requestSignature').length, 1);
+    assert.equal(mock.callsTo('expireContract').length, 1);
+    assert.equal(mock.callsTo('releaseVehicle').length, 1);
+    assert.equal(mock.callsTo('activateLease').length, 0);
   });
 });

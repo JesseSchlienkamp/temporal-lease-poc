@@ -18,6 +18,7 @@
     "start:mocks": "node dist/mock-services/server.js",
     "lead": "tsx src/scripts/start-onboarding.ts",
     "db:show": "tsx src/scripts/show-db.ts",
+    "reset": "tsx src/scripts/reset-workflow.ts",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

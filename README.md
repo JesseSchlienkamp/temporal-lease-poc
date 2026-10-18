@@ -13,19 +13,28 @@ flowchart LR
   C -->|score ≥ 620| D[Reserve vehicle 🔁]
   C -->|low| X2[CREDIT_REJECTED]
   D --> E[Quote + email 🔁]
-  E -->|signal: quoteDecision<br/>wait ≤ 7 days| F[Contract + e-sign 🔁]
   E -->|declined / expired| X3[release vehicle ↩]
-  F -->|signal: contractSigned<br/>wait ≤ 14 days| G[ACTIVE + welcome email 🔁]
-  F -->|expired| X4[release vehicle ↩]
+  subgraph child["child workflow: contractSigning (&lt;leadId&gt;-signing)"]
+    F[Contract + e-sign 🔁] --> F2[Wait for signature ≤ 14 days]
+  end
+  E -->|signal: quoteDecision<br/>wait ≤ 7 days| F
+  F2 -->|signal: contractSigned| G[ACTIVE + welcome email 🔁]
+  F2 -->|expired| X4[release vehicle ↩]
 ```
 
 🔁 = calls a flaky external service and is retried by Temporal. ↩ = compensation (saga).
+
+Contract signing runs as a **child workflow** with a fixed ID (`<leadId>-signing`). It has its own
+lifecycle (up to 14 days), and you can reset it on its own: the parent keeps waiting and picks up
+the result of the child's new run. The credit check and vehicle reservation don't run again.
 
 ## Layout
 
 ```
 src/
-  workflows/onboarding.ts       the workflow: steps, signals, query, retry policies, compensation
+  workflows/onboarding.ts       parent workflow: steps, signals, query, compensation
+  workflows/contract-signing.ts child workflow: contract, e-signature, wait for signature
+  workflows/activity-proxies.ts retry policies and timeouts for local and external activities
   workflows/onboarding.test.ts  tests with mocked activities (time-skipping test server)
   activities/                   one file per domain; each writes to SQLite + audit trail
   activities/support.ts         HTTP helper: 5xx/408/429/network → retryable, other 4xx → non-retryable
@@ -33,7 +42,7 @@ src/
   mock-services/server.ts       fake credit bureau / inventory / e-sign / email with chaos controls
   api/server.ts                 HTTP API: start onboarding, signal, query
   worker.ts                     Temporal worker
-  scripts/                      CLI demo driver + DB viewer
+  scripts/                      CLI demo driver, DB viewer, workflow reset
 infra/                          Bicep + deploy script for Azure Container Apps
 Dockerfile, docker-compose.yml
 ```
@@ -67,8 +76,10 @@ curl -X POST localhost:3000/leads -H 'content-type: application/json' -d '{
 curl localhost:3000/leads/lead-1a2b3c4d                                    # live state (query)
 curl -X POST localhost:3000/leads/lead-1a2b3c4d/quote-decision \
      -H 'content-type: application/json' -d '{"accepted": true}'          # signal
-curl -X POST localhost:3000/leads/lead-1a2b3c4d/sign                       # signal (e-sign webhook)
+curl -X POST localhost:3000/leads/lead-1a2b3c4d/sign                       # signal to the signing child
 ```
+
+`GET /leads/:id` also returns the signing child's state (`signing.stage`) once the child has started.
 
 Vehicle models: `Volvo EX30`, `Tesla Model 3`, `Kia EV6`, `Volkswagen ID.4`, `BMW i4`, `Skoda Enyaq`.
 
@@ -112,8 +123,14 @@ Scenarios worth showing:
    the workflow fails immediately without retrying, and the lead is marked `FAILED`.
 6. **Business rejection (not an error)**: `npm run lead -- --auto --email jan+reject@example.com` ends in `CREDIT_REJECTED`.
 7. **Compensation**: `npm run lead -- --auto --decline`. The reserved vehicle is released (see `vehicle_reservations`).
+8. **Reset only the child**: start a lead with `npm run lead`, accept the quote, and wait for
+   `AWAITING_SIGNATURE`. Then run `npm run reset -- <leadId>-signing`. The child's old run is
+   terminated and a new run creates the contract and sends the e-sign envelope again (both are
+   idempotent). The parent keeps waiting. `POST /leads/<leadId>/sign` then completes the lease.
+   In `workflow_events`, only `createContract`, `requestSignature` and `sendEmail:contract-ready`
+   appear twice.
 
-Retry policies live at the top of `src/workflows/onboarding.ts`. When an activity runs out of
+Retry policies live in `src/workflows/activity-proxies.ts`. When an activity runs out of
 attempts (10 for external calls), the workflow compensates, marks the lead `FAILED` and fails.
 
 ### Tests (mocked activities)
@@ -125,7 +142,8 @@ npm test
 `src/workflows/onboarding.test.ts` replaces the activities with mocks that throw on purpose. The
 tests check that a flaky service is retried until it succeeds (attempts `[1, 2, 3]`), that a
 service that stays down is called exactly `maximumAttempts` times, that a non-retryable error is
-called once, and that the 7-day quote timeout releases the vehicle. The time-skipping server
+called once, that the 7-day quote timeout releases the vehicle, and that an expired signature in
+the child workflow leads to compensation in the parent. The time-skipping server
 makes the backoffs and timers pass instantly.
 
 ## Deploy to Azure Container Apps

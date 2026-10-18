@@ -89,4 +89,6 @@ export interface OnboardingState {
   reservation?: VehicleReservation;
   quote?: Quote;
   contract?: Contract;
+  /** Id of the contract-signing child workflow, once started. */
+  signingWorkflowId?: string;
 }
