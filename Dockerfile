@@ -1,5 +1,5 @@
 # One image, three roles. Pick the role with the container command:
-#   node dist/worker.js                 (default) Temporal worker + SQLite
+#   node dist/temporal/worker.js        (default) Temporal worker + SQLite
 #   node dist/api/server.js             HTTP API
 #   node dist/mock-services/server.js   mock external services
 #
@@ -23,4 +23,4 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
-CMD ["node", "dist/worker.js"]
+CMD ["node", "dist/temporal/worker.js"]

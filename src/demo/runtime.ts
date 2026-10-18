@@ -3,14 +3,14 @@ import { Client, WorkflowFailedError, type WorkflowHandle } from '@temporalio/cl
 import pc from 'picocolors';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config';
-import { signingWorkflowId } from '../shared/ids';
-import { connectClient } from '../temporal-connection';
-import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
-import type { OnboardingOptions, OnboardingState, OnboardingStatus } from '../workflows/carLeaseOnboarding/types';
-import type { LeadInput } from '../activities/lead/types';
-import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
-import { contractSignedSignal, getSigningStateQuery } from '../workflows/contractSigning/messages';
-import type { SigningState } from '../workflows/contractSigning/types';
+import { signingWorkflowId } from '../temporal/workflows/ids';
+import { connectClient } from '../temporal/connection';
+import { getStateQuery, quoteDecisionSignal } from '../temporal/workflows/carLeaseOnboarding/messages';
+import type { OnboardingOptions, OnboardingState, OnboardingStatus } from '../temporal/workflows/carLeaseOnboarding/types';
+import type { LeadInput } from '../temporal/activities/lead/types';
+import type { carLeaseOnboarding } from '../temporal/workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
+import { contractSignedSignal, getSigningStateQuery } from '../temporal/workflows/contractSigning/messages';
+import type { SigningState } from '../temporal/workflows/contractSigning/types';
 import type { DemoContext, FollowHooks, FollowResult, Lead, PendingActivity, StepStats } from './types';
 
 export const API_URL = `http://localhost:${config.apiPort}`;

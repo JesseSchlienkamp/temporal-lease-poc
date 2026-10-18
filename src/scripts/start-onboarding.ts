@@ -19,14 +19,14 @@ import { Client } from '@temporalio/client';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { config } from '../config';
-import { signingWorkflowId } from '../shared/ids';
-import { connectClient } from '../temporal-connection';
-import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
-import type { OnboardingStatus } from '../workflows/carLeaseOnboarding/types';
-import type { LeadInput } from '../activities/lead/types';
-import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
-import { contractSignedSignal, getSigningStateQuery } from '../workflows/contractSigning/messages';
-import type { SigningStage } from '../workflows/contractSigning/types';
+import { signingWorkflowId } from '../temporal/workflows/ids';
+import { connectClient } from '../temporal/connection';
+import { getStateQuery, quoteDecisionSignal } from '../temporal/workflows/carLeaseOnboarding/messages';
+import type { OnboardingStatus } from '../temporal/workflows/carLeaseOnboarding/types';
+import type { LeadInput } from '../temporal/activities/lead/types';
+import type { carLeaseOnboarding } from '../temporal/workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
+import { contractSignedSignal, getSigningStateQuery } from '../temporal/workflows/contractSigning/messages';
+import type { SigningStage } from '../temporal/workflows/contractSigning/types';
 
 const SCENARIOS = {
   happy: { iban: 'NL91ABNA0417164300' },

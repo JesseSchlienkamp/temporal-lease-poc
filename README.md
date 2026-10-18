@@ -68,12 +68,17 @@ Any other well-formed IBAN is "not found".
 
 ## Layout
 
-Workflows are organised by **business process**, activities by **system / domain**:
-- **`src/workflows/`** is flat: one folder per workflow. A workflow becomes a child by being started
+Everything Temporal-specific lives in **`src/temporal/`**: workflows, activities, the worker and the
+connection. The rest of `src/` (API, database, mock services, demo) is ordinary application code
+that calls into it.
+
+Inside `src/temporal/`, workflows are organised by **business process**, activities by
+**system / domain**:
+- **`workflows/`** is flat: one folder per workflow. A workflow becomes a child by being started
   with `startChild`, not by where its folder is. Each workflow file is `<function>.workflow.ts` and
   declares its activity proxies above the function. `messages.ts` holds its signals, queries and
   updates; `types.ts` its input, state and results.
-- **`src/activities/`** has one folder per domain. Each activity has its own
+- **`activities/`** has one folder per domain. Each activity has its own
   `<function>.activity.ts`, and each domain has a `types.ts` for the activity payloads. Any workflow
   can use any activity.
 
@@ -81,35 +86,39 @@ Activities never import from `workflows/`, and a child workflow never imports fr
 
 ```
 src/
-  workflows/
-    index.ts                                 workflow registry (worker's workflowsPath)
-    common/                                  activity-options, operator-recovery, messages, types
-    carLeaseOnboarding/
-      carLeaseOnboarding.workflow.ts         lead → credit → vehicle → quote → [contractSigning] → lease
-      carLeaseOnboarding.workflow.test.ts    tests with mocked activities (time-skipping test server)
-      messages.ts · types.ts
-    contractSigning/                         started as a child by carLeaseOnboarding
-      contractSigning.workflow.ts            contract → IBAN (agent form if needed) → e-sign → signature
-      messages.ts · types.ts
-  activities/
-    index.ts                                 activity registry: named exports, one per activity
-    common/                                  activity-support (audit rows, callExternal), types
-    lead/          saveLead · updateLeadStatus · qualifyLead          + types.ts
-    credit/        runCreditCheck                                     + types.ts
-    vehicle/       reserveVehicle · releaseVehicle                    + types.ts
-    quote/         createQuote · updateQuoteStatus                    + types.ts
-    lease/         activateLease
-    notification/  sendEmail                                          + types.ts
-    contract/      createContract · requestSignature · expireContract + types.ts
-    payment/       verifyBankAccount · findPaymentMandate · savePaymentMandate + types.ts
-    agentTask/     openAgentTask · completeAgentTask · agentTaskId.ts + types.ts
-  shared/          pure helpers, also used in the workflow sandbox: iban, names, ids
+  temporal/                                  ← everything Temporal
+    worker.ts                                Temporal worker (registers workflows + activities)
+    connection.ts                            client / worker connection (local, Temporal Cloud, TLS)
+    workflows/
+      index.ts                               workflow registry (worker's workflowsPath)
+      ids.ts                                 deterministic workflow ids (e.g. <leadId>-signing)
+      common/                                activity-options, operator-recovery, messages, types
+      carLeaseOnboarding/
+        carLeaseOnboarding.workflow.ts       lead → credit → vehicle → quote → [contractSigning] → lease
+        carLeaseOnboarding.workflow.test.ts  tests with mocked activities (time-skipping test server)
+        messages.ts · types.ts
+      contractSigning/                       started as a child by carLeaseOnboarding
+        contractSigning.workflow.ts          contract → IBAN (agent form if needed) → e-sign → signature
+        messages.ts · types.ts
+    activities/
+      index.ts                               activity registry: named exports, one per activity
+      common/                                activity-support (audit rows, callExternal), types
+      lead/          saveLead · updateLeadStatus · qualifyLead          + types.ts
+      credit/        runCreditCheck                                     + types.ts
+      vehicle/       reserveVehicle · releaseVehicle                    + types.ts
+      quote/         createQuote · updateQuoteStatus                    + types.ts
+      lease/         activateLease
+      notification/  sendEmail                                          + types.ts
+      contract/      createContract · requestSignature · expireContract + types.ts
+      payment/       verifyBankAccount · findPaymentMandate · savePaymentMandate + types.ts
+      agentTask/     openAgentTask · completeAgentTask · agentTaskId.ts + types.ts
+  api/             HTTP API + agent page (Temporal client)
   db/              SQLite schema
   mock-services/   fake credit bureau / inventory / e-sign / email / bank with chaos controls
-  api/             HTTP API + agent page
+  shared/          pure helpers (iban, names), used by workflows and the mock bank
   demo/            interactive demo CLI (npm run demo)
   scripts/         CLI lead driver, DB viewer, workflow reset, chaos switch
-  worker.ts        Temporal worker
+  config.ts        environment settings
 infra/             Bicep + deploy script for Azure Container Apps
 ```
 
@@ -162,7 +171,7 @@ npm run lead -- --auto --scenario esign-outage # e-sign provider down: the signi
 
 1. `npm run lead -- --auto --scenario esign-outage` switches the mock e-sign provider down (every
    call returns 502) and starts a lead with a valid IBAN.
-2. The e-sign call is allowed **3 attempts** (`ESIGN_ACTIVITY` in `src/workflows/common/activity-options.ts`). After the third
+2. The e-sign call is allowed **3 attempts** (`ESIGN_ACTIVITY` in `src/temporal/workflows/common/activity-options.ts`). After the third
    502 the signing child **fails**; the Temporal UI shows `<leadId>-signing` as Failed with the 502.
 3. The parent doesn't fail. It goes to `NEEDS_ATTENTION` (step `contractSigning`), and the
    vehicle **stays reserved**. The CLI prints the next two commands:
@@ -286,8 +295,8 @@ Scenarios worth showing:
    In `workflow_events`, only `createContract`, `requestSignature` and `sendEmail:contract-ready`
    appear twice.
 
-Retry policies live in `src/workflows/common/activity-options.ts`. External calls are wrapped in
-`recovery.guard` (`src/workflows/common/operator-recovery.ts`). When a call runs out of attempts (10), the
+Retry policies live in `src/temporal/workflows/common/activity-options.ts`. External calls are wrapped in
+`recovery.guard` (`src/temporal/workflows/common/operator-recovery.ts`). When a call runs out of attempts (10), the
 workflow doesn't fail: it parks the step and waits for an operator, without a timeout. The
 operator command is a workflow **update**, not a signal, so the workflow can reject it when nothing
 is parked; the API returns 409 in that case. Non-retryable failures (such as the unknown-model 404)
@@ -299,7 +308,7 @@ still fail the workflow immediately, because retrying the same input won't help.
 npm test
 ```
 
-`src/workflows/carLeaseOnboarding/carLeaseOnboarding.workflow.test.ts` replaces the activities with mocks that throw on purpose. The
+`src/temporal/workflows/carLeaseOnboarding/carLeaseOnboarding.workflow.test.ts` replaces the activities with mocks that throw on purpose. The
 tests check that a flaky service is retried until it succeeds (attempts `[1, 2, 3]`), that a
 service that stays down is called `maximumAttempts` times and then parked until an operator sends
 `retry`, that an operator `abort` fails the lead and releases the vehicle, that a non-retryable

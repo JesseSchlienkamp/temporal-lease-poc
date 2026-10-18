@@ -4,10 +4,10 @@ import pc from 'picocolors';
 import { spawn } from 'node:child_process';
 import { resetToFirstWorkflowTask } from '../scripts/reset-workflow';
 import { formatIban } from '../shared/iban';
-import { operatorActionUpdate } from '../workflows/common/messages';
-import { quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
-import { getSigningStateQuery, submitPaymentDetailsUpdate } from '../workflows/contractSigning/messages';
-import type { SigningState } from '../workflows/contractSigning/types';
+import { operatorActionUpdate } from '../temporal/workflows/common/messages';
+import { quoteDecisionSignal } from '../temporal/workflows/carLeaseOnboarding/messages';
+import { getSigningStateQuery, submitPaymentDetailsUpdate } from '../temporal/workflows/contractSigning/messages';
+import type { SigningState } from '../temporal/workflows/contractSigning/types';
 import {
   API_URL,
   chaos,

@@ -20,7 +20,7 @@ services:
 
   worker:
     build: .
-    command: ["node", "dist/worker.js"]
+    command: ["node", "dist/temporal/worker.js"]
     restart: on-failure # retries until the Temporal server accepts connections
     environment:
       TEMPORAL_ADDRESS: temporal:7233

@@ -11,7 +11,7 @@
 import { Client } from '@temporalio/client';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config';
-import { connectClient } from '../temporal-connection';
+import { connectClient } from '../temporal/connection';
 
 /** Resets `workflowId` to its first completed workflow task. Returns the event id and the new run id. */
 export async function resetToFirstWorkflowTask(client: Client, workflowId: string, reason: string) {

@@ -2,16 +2,16 @@ import { Client, WorkflowNotFoundError, WorkflowUpdateFailedError } from '@tempo
 import express, { type ErrorRequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config';
-import { signingWorkflowId } from '../shared/ids';
-import { connectClient } from '../temporal-connection';
-import { operatorActionUpdate } from '../workflows/common/messages';
-import type { OperatorCommand } from '../workflows/common/types';
-import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
-import type { OnboardingOptions } from '../workflows/carLeaseOnboarding/types';
-import type { LeadInput } from '../activities/lead/types';
-import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
-import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from '../workflows/contractSigning/messages';
-import type { AgentForm } from '../workflows/contractSigning/types';
+import { signingWorkflowId } from '../temporal/workflows/ids';
+import { connectClient } from '../temporal/connection';
+import { operatorActionUpdate } from '../temporal/workflows/common/messages';
+import type { OperatorCommand } from '../temporal/workflows/common/types';
+import { getStateQuery, quoteDecisionSignal } from '../temporal/workflows/carLeaseOnboarding/messages';
+import type { OnboardingOptions } from '../temporal/workflows/carLeaseOnboarding/types';
+import type { LeadInput } from '../temporal/activities/lead/types';
+import type { carLeaseOnboarding } from '../temporal/workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
+import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from '../temporal/workflows/contractSigning/messages';
+import type { AgentForm } from '../temporal/workflows/contractSigning/types';
 import { agentPage } from './agent-page';
 
 async function main() {
