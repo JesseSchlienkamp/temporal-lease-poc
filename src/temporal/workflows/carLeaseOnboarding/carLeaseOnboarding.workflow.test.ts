@@ -7,9 +7,12 @@
 import { Context } from '@temporalio/activity';
 import { WorkflowFailedError, WorkflowNotFoundError, WorkflowUpdateFailedError } from '@temporalio/client';
 import { ApplicationFailure } from '@temporalio/common';
+import { WorkflowCoverage } from '@temporalio/nyc-test-coverage';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Runtime, DefaultLogger, Worker } from '@temporalio/worker';
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { signingWorkflowId } from '../ids';
 import type * as activities from '../../activities';
@@ -76,6 +79,13 @@ function mockActivities(overrides: Partial<Activities> = {}) {
   return { activities: tracked, callsTo, statuses };
 }
 
+// npm run test:coverage sets this: Temporal's plugin instruments the workflow bundle (which runs in
+// the sandbox, out of reach of ordinary coverage tools) and the result is written to this file.
+const coverageFile = process.env.WORKFLOW_COVERAGE_FILE;
+const workflowCoverage = coverageFile ? new WorkflowCoverage() : undefined;
+const coverageGlobal = globalThis as { __coverage__?: object };
+if (coverageFile) coverageGlobal.__coverage__ ??= {}; // the plugin only instruments when this exists
+
 describe('carLeaseOnboarding', () => {
   let env: TestWorkflowEnvironment;
   let n = 0;
@@ -86,16 +96,22 @@ describe('carLeaseOnboarding', () => {
   });
   after(async () => {
     await env?.teardown();
+    if (workflowCoverage && coverageFile) {
+      workflowCoverage.mergeIntoGlobalCoverage();
+      mkdirSync(dirname(coverageFile), { recursive: true });
+      writeFileSync(coverageFile, JSON.stringify(coverageGlobal.__coverage__));
+    }
   });
 
   async function run<T>(acts: Activities, fn: (taskQueue: string) => Promise<T>): Promise<T> {
     const taskQueue = `test-${++n}`;
-    const worker = await Worker.create({
+    const options = {
       connection: env.nativeConnection,
       taskQueue,
       workflowsPath: require.resolve('..'),
       activities: acts,
-    });
+    };
+    const worker = await Worker.create(workflowCoverage ? workflowCoverage.augmentWorkerOptions(options) : options);
     return worker.runUntil(fn(taskQueue));
   }
 

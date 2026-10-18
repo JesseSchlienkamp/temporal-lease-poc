@@ -1,0 +1,15 @@
+{
+  "all": true,
+  "src": ["src/temporal/activities"],
+  "include": ["src/temporal/activities/**/*.ts"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/types.ts",
+    "src/temporal/activities/index.ts",
+    "src/temporal/activities/common/testing.ts",
+    "src/temporal/activities/common/testing-env.ts"
+  ],
+  "reporter": ["json"],
+  "reports-dir": ".coverage/c8",
+  "temp-directory": ".coverage/c8-tmp"
+}

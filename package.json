@@ -23,6 +23,7 @@
     "reset": "tsx src/scripts/reset-workflow.ts",
     "chaos": "tsx src/scripts/chaos.ts",
     "test": "tsx --test 'src/**/*.test.ts'",
+    "test:coverage": "rm -rf coverage .coverage && WORKFLOW_COVERAGE_FILE=.coverage/merge/workflows.json c8 tsx --test 'src/**/*.test.ts' && cp .coverage/c8/coverage-final.json .coverage/merge/activities.json && nyc report --temp-dir .coverage/merge --reporter text-summary --reporter text --reporter html --report-dir coverage --check-coverage --statements 95 --lines 95 --functions 95",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -36,11 +37,14 @@
   },
   "devDependencies": {
     "@clack/prompts": "^1.8.1",
+    "@temporalio/nyc-test-coverage": "^1.24.0",
     "@temporalio/testing": "^1.24.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.5",
+    "c8": "^12.0.0",
     "concurrently": "^10.0.6",
+    "nyc": "^18.0.0",
     "picocolors": "^1.1.1",
     "tsx": "^4.23.15",
     "typescript": "~5.9.3"
