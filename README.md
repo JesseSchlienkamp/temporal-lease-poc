@@ -216,6 +216,9 @@ npm run dev:api               # API + agent page on :3000
 npm run dev:mocks             # mock services on :8081: logs every call and injected failure
 ```
 
+`npm run dev:api-server` runs the API and the mocks together, so two terminals are enough:
+`npm run dev:worker` in one, `npm run dev:api-server` in the other.
+
 Or run everything in containers with `docker compose up --build`.
 
 ### API

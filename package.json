@@ -13,6 +13,7 @@
     "dev:worker": "tsx watch src/temporal/worker.ts",
     "dev:api": "tsx watch src/api/server.ts",
     "dev:mocks": "tsx watch src/mock-services/server.ts",
+    "dev:api-server": "concurrently -n api,mocks -c green,magenta \"npm:dev:api\" \"npm:dev:mocks\"",
     "start:worker": "node dist/temporal/worker.js",
     "start:api": "node dist/api/server.js",
     "start:mocks": "node dist/mock-services/server.js",
