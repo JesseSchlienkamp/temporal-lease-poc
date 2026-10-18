@@ -6,8 +6,8 @@ import { resetToFirstWorkflowTask } from '../scripts/reset-workflow';
 import { formatIban } from '../shared/iban';
 import { operatorActionUpdate } from '../workflows/common/messages';
 import { quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
-import { getSigningStateQuery, submitPaymentDetailsUpdate } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/messages';
-import type { SigningState } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
+import { getSigningStateQuery, submitPaymentDetailsUpdate } from '../workflows/contractSigning/messages';
+import type { SigningState } from '../workflows/contractSigning/types';
 import {
   API_URL,
   chaos,

@@ -1,5 +1,5 @@
 import { Worker } from '@temporalio/worker';
-import * as activities from './workflows/activities';
+import * as activities from './activities';
 import { config } from './config';
 import { getDb } from './db/database';
 import { connectWorker } from './temporal-connection';

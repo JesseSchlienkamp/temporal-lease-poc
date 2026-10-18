@@ -22,10 +22,11 @@ import { config } from '../config';
 import { signingWorkflowId } from '../shared/ids';
 import { connectClient } from '../temporal-connection';
 import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
-import type { LeadInput, OnboardingStatus } from '../workflows/carLeaseOnboarding/types';
+import type { OnboardingStatus } from '../workflows/carLeaseOnboarding/types';
+import type { LeadInput } from '../activities/lead/types';
 import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
-import { contractSignedSignal, getSigningStateQuery } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/messages';
-import type { SigningStage } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
+import { contractSignedSignal, getSigningStateQuery } from '../workflows/contractSigning/messages';
+import type { SigningStage } from '../workflows/contractSigning/types';
 
 const SCENARIOS = {
   happy: { iban: 'NL91ABNA0417164300' },

@@ -68,46 +68,48 @@ Any other well-formed IBAN is "not found".
 
 ## Layout
 
-Each workflow has its own folder, named after the workflow, with its activities next to it.
-Child workflows live under their parent's `childWorkflows/` folder.
-- **Files:** a workflow file is called `<function>.workflow.ts` and declares its activity proxies
-  above the function. Every activity has its own `<function>.activity.ts`.
-- **Folders:** every activity sits in a domain folder (`lead/`, `vehicle/`, `payment/`, …).
-- **Types and messages:** types live in `types.ts`, and signals, queries and updates in
-  `messages.ts`, so clients can import them without loading workflow code.
+Workflows are organised by **business process**, activities by **system / domain**:
+- **`src/workflows/`** is flat: one folder per workflow. A workflow becomes a child by being started
+  with `startChild`, not by where its folder is. Each workflow file is `<function>.workflow.ts` and
+  declares its activity proxies above the function. `messages.ts` holds its signals, queries and
+  updates; `types.ts` its input, state and results.
+- **`src/activities/`** has one folder per domain. Each activity has its own
+  `<function>.activity.ts`, and each domain has a `types.ts` for the activity payloads. Any workflow
+  can use any activity.
+
+Activities never import from `workflows/`, and a child workflow never imports from its parent.
 
 ```
-src/workflows/
-  index.ts                                   workflow registry (worker's workflowsPath)
-  activities.ts                              activity registry: merges every activities/ index
-  common/                                    activity-options, activity-support, operator-recovery, messages, types
-  carLeaseOnboarding/
-    carLeaseOnboarding.workflow.ts           lead → credit → vehicle → quote → [child] → active lease
-    carLeaseOnboarding.workflow.test.ts      tests with mocked activities (time-skipping test server)
-    messages.ts  types.ts
-    activities/
-      index.ts                               named exports: every export is registered as an activity
-      lead/        saveLead · updateLeadStatus · qualifyLead          (.activity.ts)
-      vehicle/     reserveVehicle · releaseVehicle
-      quote/       createQuote · updateQuoteStatus
-      credit/      runCreditCheck
-      lease/       activateLease
-      notification/ sendEmail
-    childWorkflows/
-      contractSigning/
-        contractSigning.workflow.ts          contract → IBAN (agent form if needed) → e-sign → signature
-        messages.ts  types.ts
-        activities/
-          contract/    createContract · requestSignature · expireContract
-          payment/     verifyBankAccount · findPaymentMandate · savePaymentMandate
-          agentTask/   openAgentTask · completeAgentTask  (+ agentTaskId.ts helper)
-src/shared/        pure helpers, also used in the workflow sandbox: iban, names, ids
-src/db/            SQLite schema
-src/mock-services/ fake credit bureau / inventory / e-sign / email / bank with chaos controls
-src/api/           HTTP API + agent page
-src/demo/          interactive demo CLI (npm run demo)
-src/scripts/       CLI lead driver, DB viewer, workflow reset, chaos switch
-src/worker.ts      Temporal worker
+src/
+  workflows/
+    index.ts                                 workflow registry (worker's workflowsPath)
+    common/                                  activity-options, operator-recovery, messages, types
+    carLeaseOnboarding/
+      carLeaseOnboarding.workflow.ts         lead → credit → vehicle → quote → [contractSigning] → lease
+      carLeaseOnboarding.workflow.test.ts    tests with mocked activities (time-skipping test server)
+      messages.ts · types.ts
+    contractSigning/                         started as a child by carLeaseOnboarding
+      contractSigning.workflow.ts            contract → IBAN (agent form if needed) → e-sign → signature
+      messages.ts · types.ts
+  activities/
+    index.ts                                 activity registry: named exports, one per activity
+    common/                                  activity-support (audit rows, callExternal), types
+    lead/          saveLead · updateLeadStatus · qualifyLead          + types.ts
+    credit/        runCreditCheck                                     + types.ts
+    vehicle/       reserveVehicle · releaseVehicle                    + types.ts
+    quote/         createQuote · updateQuoteStatus                    + types.ts
+    lease/         activateLease
+    notification/  sendEmail                                          + types.ts
+    contract/      createContract · requestSignature · expireContract + types.ts
+    payment/       verifyBankAccount · findPaymentMandate · savePaymentMandate + types.ts
+    agentTask/     openAgentTask · completeAgentTask · agentTaskId.ts + types.ts
+  shared/          pure helpers, also used in the workflow sandbox: iban, names, ids
+  db/              SQLite schema
+  mock-services/   fake credit bureau / inventory / e-sign / email / bank with chaos controls
+  api/             HTTP API + agent page
+  demo/            interactive demo CLI (npm run demo)
+  scripts/         CLI lead driver, DB viewer, workflow reset, chaos switch
+  worker.ts        Temporal worker
 infra/             Bicep + deploy script for Azure Container Apps
 ```
 

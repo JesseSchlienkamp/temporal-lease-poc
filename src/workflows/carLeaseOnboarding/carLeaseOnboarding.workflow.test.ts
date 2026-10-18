@@ -12,10 +12,11 @@ import { Runtime, DefaultLogger, Worker } from '@temporalio/worker';
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { signingWorkflowId } from '../../shared/ids';
-import type * as activities from '../activities';
+import type * as activities from '../../activities';
 import { operatorActionUpdate } from '../common/messages';
-import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from './childWorkflows/contractSigning/messages';
-import type { PaymentMandate, SigningState } from './childWorkflows/contractSigning/types';
+import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from '../contractSigning/messages';
+import type { SigningState } from '../contractSigning/types';
+import type { PaymentMandate } from '../../activities/payment/types';
 import { getStateQuery, quoteDecisionSignal } from './messages';
 import type { LeadInput, OnboardingStatus } from './types';
 import { carLeaseOnboarding } from './carLeaseOnboarding.workflow';
@@ -92,7 +93,7 @@ describe('carLeaseOnboarding', () => {
     const worker = await Worker.create({
       connection: env.nativeConnection,
       taskQueue,
-      workflowsPath: require.resolve('../index'),
+      workflowsPath: require.resolve('..'),
       activities: acts,
     });
     return worker.runUntil(fn(taskQueue));

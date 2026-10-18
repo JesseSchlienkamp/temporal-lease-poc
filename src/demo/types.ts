@@ -1,7 +1,7 @@
 // Types of the demo CLI.
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { ParkedStep } from '../workflows/common/types';
-import type { SigningState } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
+import type { SigningState } from '../workflows/contractSigning/types';
 import type { OnboardingState } from '../workflows/carLeaseOnboarding/types';
 import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
 import type { Waiter } from './runtime';

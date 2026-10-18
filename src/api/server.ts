@@ -7,10 +7,11 @@ import { connectClient } from '../temporal-connection';
 import { operatorActionUpdate } from '../workflows/common/messages';
 import type { OperatorCommand } from '../workflows/common/types';
 import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
-import type { LeadInput, OnboardingOptions } from '../workflows/carLeaseOnboarding/types';
+import type { OnboardingOptions } from '../workflows/carLeaseOnboarding/types';
+import type { LeadInput } from '../activities/lead/types';
 import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
-import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/messages';
-import type { AgentForm } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
+import { contractSignedSignal, getSigningStateQuery, submitPaymentDetailsUpdate } from '../workflows/contractSigning/messages';
+import type { AgentForm } from '../workflows/contractSigning/types';
 import { agentPage } from './agent-page';
 
 async function main() {

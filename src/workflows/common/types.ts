@@ -25,6 +25,3 @@ export interface GuardOptions {
   /** Which failures park the step. Default: activities that exhausted their retries on retryable errors. */
   parkOn?: (err: unknown) => boolean;
 }
-
-/** One row in the workflow_events audit table (written by activities, one per attempt). */
-export type AuditOutcome = 'STARTED' | 'SUCCEEDED' | 'FAILED';

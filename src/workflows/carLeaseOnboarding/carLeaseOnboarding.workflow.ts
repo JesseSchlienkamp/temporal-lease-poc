@@ -12,8 +12,8 @@ import {
 import { signingWorkflowId } from '../../shared/ids';
 import { EXTERNAL_ACTIVITY, LOCAL_ACTIVITY } from '../common/activity-options';
 import { createOperatorRecovery, rootCauseMessage } from '../common/operator-recovery';
-import type * as activities from './activities';
-import { contractSigning } from './childWorkflows/contractSigning/contractSigning.workflow';
+import type * as activities from '../../activities';
+import { contractSigning } from '../contractSigning/contractSigning.workflow';
 import { getStateQuery, quoteDecisionSignal } from './messages';
 import type { LeadInput, OnboardingOptions, OnboardingState, OnboardingStatus, QuoteDecision } from './types';
 

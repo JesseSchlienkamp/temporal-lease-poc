@@ -6,10 +6,11 @@ import { config } from '../config';
 import { signingWorkflowId } from '../shared/ids';
 import { connectClient } from '../temporal-connection';
 import { getStateQuery, quoteDecisionSignal } from '../workflows/carLeaseOnboarding/messages';
-import type { LeadInput, OnboardingOptions, OnboardingState, OnboardingStatus } from '../workflows/carLeaseOnboarding/types';
+import type { OnboardingOptions, OnboardingState, OnboardingStatus } from '../workflows/carLeaseOnboarding/types';
+import type { LeadInput } from '../activities/lead/types';
 import type { carLeaseOnboarding } from '../workflows/carLeaseOnboarding/carLeaseOnboarding.workflow';
-import { contractSignedSignal, getSigningStateQuery } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/messages';
-import type { SigningState } from '../workflows/carLeaseOnboarding/childWorkflows/contractSigning/types';
+import { contractSignedSignal, getSigningStateQuery } from '../workflows/contractSigning/messages';
+import type { SigningState } from '../workflows/contractSigning/types';
 import type { DemoContext, FollowHooks, FollowResult, Lead, PendingActivity, StepStats } from './types';
 
 export const API_URL = `http://localhost:${config.apiPort}`;

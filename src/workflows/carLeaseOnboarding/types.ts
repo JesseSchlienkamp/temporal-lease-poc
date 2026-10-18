@@ -1,31 +1,18 @@
-// Types of the carLeaseOnboarding workflow: input, state, and the payloads of its activities.
-// Type-only: safe to import inside the workflow sandbox.
+// Types of the carLeaseOnboarding workflow: input, options, state and messages. Activity payloads
+// live with their domain under src/activities. Type-only: safe to import in the workflow sandbox.
 import type { Duration } from '@temporalio/common';
+import type { Contract } from '../../activities/contract/types';
+import type { LeadInput, LeadStatus } from '../../activities/lead/types';
+import type { PaymentMandate } from '../../activities/payment/types';
+import type { Quote } from '../../activities/quote/types';
+import type { VehicleReservation } from '../../activities/vehicle/types';
 import type { ParkedStep } from '../common/types';
-import type { Contract, PaymentMandate } from './childWorkflows/contractSigning/types';
 
-// --- Input ---------------------------------------------------------------------------------------
+/** The workflow's input is the lead application. */
+export type { LeadInput };
 
-export interface LeadInput {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone?: string;
-  /** ISO date, e.g. 1990-04-23 */
-  dateOfBirth: string;
-  annualIncome: number;
-  /** One of the models known by the mock inventory, e.g. "Volvo EX30" */
-  vehicleModel: string;
-  termMonths?: number;
-  annualKm?: number;
-  downPayment?: number;
-  /**
-   * Bank account for the SEPA direct-debit mandate. Optional at application time, but required
-   * before the contract can be sent for signature: when it is missing or fails verification, the
-   * signing workflow opens a form for an agent.
-   */
-  iban?: string;
-}
+/** The onboarding status is persisted as the lead's status. */
+export type OnboardingStatus = LeadStatus;
 
 export interface OnboardingOptions {
   /** How long the customer has to accept the quote (e.g. '7 days', '30 seconds'). */
@@ -35,24 +22,6 @@ export interface OnboardingOptions {
 }
 
 // --- State (returned by the getState query and as the workflow result) ---------------------------
-
-export type OnboardingStatus =
-  | 'LEAD_RECEIVED'
-  | 'QUALIFIED'
-  | 'DISQUALIFIED'
-  | 'CREDIT_APPROVED'
-  | 'CREDIT_REJECTED'
-  | 'VEHICLE_RESERVED'
-  | 'QUOTE_SENT'
-  | 'QUOTE_DECLINED'
-  | 'QUOTE_EXPIRED'
-  | 'CONTRACTING'
-  | 'AWAITING_AGENT'
-  | 'AWAITING_SIGNATURE'
-  | 'SIGNATURE_EXPIRED'
-  | 'ACTIVE'
-  | 'NEEDS_ATTENTION'
-  | 'FAILED';
 
 export interface StatusChange {
   status: OnboardingStatus;
@@ -82,33 +51,3 @@ export interface QuoteDecision {
   accepted: boolean;
   reason?: string;
 }
-
-// --- Activity payloads ---------------------------------------------------------------------------
-
-export interface QualificationResult {
-  qualified: boolean;
-  reason?: string;
-}
-
-export interface CreditCheckResult {
-  score: number;
-  decision: 'APPROVED' | 'REJECTED';
-  bureauReference: string;
-}
-
-export interface VehicleReservation {
-  reservationId: string;
-  vin: string;
-  vehicleModel: string;
-  listPrice: number;
-}
-
-export interface Quote {
-  quoteId: string;
-  monthlyPayment: number;
-  termMonths: number;
-  annualKm: number;
-  downPayment: number;
-}
-
-export type EmailTemplate = 'quote' | 'credit-rejected' | 'contract-ready' | 'welcome';
