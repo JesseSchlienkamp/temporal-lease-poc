@@ -54,6 +54,12 @@ The submit is a workflow update (`submitPaymentDetails`). Its handler waits for 
 verdict, so the agent sees "accepted" or the reason for rejection in the same request. Open forms
 are also recorded in the `agent_tasks` table, and the verified IBAN in `payment_mandates`.
 
+`openAgentTask` returns a link to the task, `{ taskId, url }`. In the Temporal UI, open the
+`<leadId>-signing` workflow and expand the `openAgentTask` activity: its result has a `url` like
+`http://localhost:3000/agent?task=<leadId>-signing`, which opens the inbox scrolled to that form.
+The same link is in `GET /leads/:id` (`signing.agentForm.url`). The base comes from
+`AGENT_PAGE_URL`; in Azure the Bicep template points it at the API's public address.
+
 Demo IBANs known to the mock bank (they're also listed on the agent page):
 
 | IBAN                     | Bank record                     |

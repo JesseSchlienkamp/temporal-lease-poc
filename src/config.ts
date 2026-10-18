@@ -19,4 +19,6 @@ export const config = {
   mockServicesUrl: env('MOCK_SERVICES_URL', 'http://localhost:8081'),
   apiPort: Number(env('PORT', '3000')),
   mockPort: Number(env('MOCK_PORT', '8081')),
+  /** Public URL of the agent inbox, used in links to agent tasks (e.g. from the Temporal UI). */
+  agentPageUrl: env('AGENT_PAGE_URL', `http://localhost:${env('PORT', '3000')}/agent`),
 };

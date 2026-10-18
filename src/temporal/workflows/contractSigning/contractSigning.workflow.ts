@@ -140,7 +140,8 @@ export async function contractSigning(input: ContractSigningInput): Promise<Cont
         openedAt: state.agentForm?.openedAt ?? new Date().toISOString(),
         prefill: { accountHolder: candidate?.accountHolder ?? customerName, iban: candidate?.iban },
       };
-      await local.openAgentTask(leadId, workflowId, 'COLLECT_IBAN', reason);
+      const task = await local.openAgentTask(leadId, workflowId, 'COLLECT_IBAN', reason);
+      state.agentForm.url = task.url;
       await setLeadStatus('AWAITING_AGENT', reason);
       state.stage = 'AWAITING_AGENT';
       // Answer the rejected submission only now that the form is open again, so the agent can

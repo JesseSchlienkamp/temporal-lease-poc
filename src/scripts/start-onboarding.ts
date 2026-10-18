@@ -109,7 +109,7 @@ async function main() {
     if (current !== last) {
       console.log(`  status: ${(last = current)}`);
       if (signing?.stage === 'AWAITING_AGENT') {
-        console.log(`    ↳ ${signing.agentForm?.reason}. Waiting for an agent: http://localhost:${config.apiPort}/agent`);
+        console.log(`    ↳ ${signing.agentForm?.reason}. Waiting for an agent: ${signing.agentForm?.url ?? `http://localhost:${config.apiPort}/agent`}`);
       }
       if (state.needsAttention) {
         console.log(`    ↳ ${state.needsAttention.step} failed: ${state.needsAttention.error}`);

@@ -56,6 +56,8 @@ export interface AgentForm {
   rejectedSubmissions: number;
   openedAt: string;
   prefill: { accountHolder: string; iban?: string };
+  /** Link to this task in the agent inbox (from the openAgentTask activity). */
+  url?: string;
 }
 
 // --- Messages ------------------------------------------------------------------------------------

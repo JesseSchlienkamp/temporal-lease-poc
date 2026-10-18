@@ -253,6 +253,7 @@ resource worker 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
           env: concat(temporalEnv, [
             { name: 'MOCK_SERVICES_URL', value: 'http://${mocksAppName}' }
             { name: 'DB_PATH', value: '/app/data/leasing.db' }
+            { name: 'AGENT_PAGE_URL', value: 'https://${api!.properties.configuration.ingress.fqdn}/agent' }
           ])
           resources: { cpu: json('0.5'), memory: '1Gi' }
         }

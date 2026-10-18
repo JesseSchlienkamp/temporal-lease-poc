@@ -59,7 +59,7 @@ function mockActivities(overrides: Partial<Activities> = {}) {
     verifyBankAccount: async () => ({ result: 'MATCH', registeredName: 'J. Jansen' }),
     savePaymentMandate: async (_id, details) => (savedMandate = { mandateReference: 'MANDATE-1', ...details }),
     findPaymentMandate: async () => savedMandate,
-    openAgentTask: async () => {},
+    openAgentTask: async (_leadId, workflowId) => ({ taskId: `${workflowId}:COLLECT_IBAN`, url: `http://agent/${workflowId}` }),
     completeAgentTask: async () => {},
   };
   const merged = { ...happy, ...overrides };

@@ -22,6 +22,7 @@ export const agentPage = /* html */ `<!doctype html>
   .sub { color: var(--muted); font-size: 13px; }
   .empty { background: var(--card); border: 1px dashed var(--line); border-radius: 10px; padding: 32px; text-align: center; color: var(--muted); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .card.linked { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
   .card h2 { font-size: 17px; margin: 0 0 2px; }
   .meta { color: var(--muted); font-size: 13px; margin-bottom: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--err-bg); color: var(--err); margin-left: 8px; vertical-align: 2px; }
@@ -64,6 +65,9 @@ export const agentPage = /* html */ `<!doctype html>
   const doneEl = document.getElementById('done');
   const statusEl = document.getElementById('status');
   const cards = new Map(); // workflowId -> { el, reasonEl, badgeEl }
+  // Deep link from the Temporal UI / CLI: /agent?task=<workflowId>
+  const linkedTask = new URLSearchParams(location.search).get('task');
+  let linkedHandled = false;
 
   function el(tag, props = {}, children = []) {
     const node = Object.assign(document.createElement(tag), props);
@@ -136,7 +140,8 @@ export const agentPage = /* html */ `<!doctype html>
       form,
       resultEl,
     ]);
-    return { el: card, reasonEl, badgeEl };
+    if (task.workflowId === linkedTask) card.classList.add('linked');
+    return { el: card, reasonEl, badgeEl, iban };
   }
 
   async function refresh() {
@@ -159,6 +164,16 @@ export const agentPage = /* html */ `<!doctype html>
       }
       for (const [id, card] of cards) {
         if (!seen.has(id)) { card.el.remove(); cards.delete(id); }
+      }
+      if (linkedTask && !linkedHandled) {
+        linkedHandled = true;
+        const linked = cards.get(linkedTask);
+        if (linked) {
+          linked.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          linked.iban.focus({ preventScroll: true });
+        } else {
+          doneEl.prepend(el('div', { className: 'result ok', textContent: 'Task ' + linkedTask + ' is no longer open: it was completed or the workflow moved on.' }));
+        }
       }
       tasksEl.querySelector('.empty')?.remove();
       if (!cards.size) tasksEl.append(el('div', { className: 'empty', textContent: 'No open tasks. Start a lead without an IBAN to create one.' }));

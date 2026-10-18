@@ -87,7 +87,7 @@ function agentFormHook(): NonNullable<FollowHooks['onAgentForm']> {
         kv('Customer', form.customerName),
         kv('Reason', pc.yellow(form.reason)),
         kv('Rejected', String(form.rejectedSubmissions)),
-        kv('Agent page', pc.underline(`${API_URL}/agent`)),
+        kv('Agent page', pc.underline(form.url ?? `${API_URL}/agent`)),
       ].join('\n'),
       pc.magenta('Agent form open'),
     );
@@ -106,7 +106,7 @@ function agentFormHook(): NonNullable<FollowHooks['onAgentForm']> {
       return;
     }
 
-    if (process.platform === 'darwin') spawn('open', [`${API_URL}/agent`], { stdio: 'ignore', detached: true }).unref();
+    if (process.platform === 'darwin') spawn('open', [form.url ?? `${API_URL}/agent`], { stdio: 'ignore', detached: true }).unref();
     for (;;) {
       lead.waiter.wait(`Waiting for the agent at ${API_URL}/agent`);
       await sleep(500);
