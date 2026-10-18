@@ -208,6 +208,14 @@ npm run lead -- --auto        # or: run one onboarding from a script, playing th
 npm run db:show               # inspect the SQLite database
 ```
 
+To watch each process in its own terminal, run the parts of `npm run dev` separately:
+
+```bash
+npm run dev:worker            # worker: logs every workflow and activity, including retries
+npm run dev:api               # API + agent page on :3000
+npm run dev:mocks             # mock services on :8081: logs every call and injected failure
+```
+
 Or run everything in containers with `docker compose up --build`.
 
 ### API
